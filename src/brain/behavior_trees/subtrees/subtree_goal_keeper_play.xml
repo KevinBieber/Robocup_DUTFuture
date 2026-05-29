@@ -6,22 +6,22 @@
       <ReactiveSequence >
          <SelfLocate mode="trust_direction" />
          <SubTree ID="Locate" _autoremap="true" _while="decision!='find'" />
-         <ReactiveSequence _while="wait_for_opponent_kickoff" name="等待对方开球">
+         <ReactiveSequence _while="wait_for_opponent_kickoff" name="wait for opponent kickoff">
             <SubTree ID="CamFindAndTrackBall" _autoremap="true" />
             <SetVelocity />
          </ReactiveSequence>
-         <ReactiveSequence _while="!wait_for_opponent_kickoff" name="已方开球或对方已经开球">
+         <ReactiveSequence _while="!wait_for_opponent_kickoff" name="our kickoff or opponent already kicked off">
             <Sequence _while="ball_out">
                <SubTree ID="CamFindAndTrackBall" _autoremap="true" />
                <GoBackInField />
                <SubTree ID="Locate" _autoremap="true" _while="decision!='find'" />
             </Sequence>
             <ReactiveSequence _while="!ball_out">
-               <ReactiveSequence _while="wait_for_opponent_kickoff" name="等待对方开球">
+               <ReactiveSequence _while="wait_for_opponent_kickoff" name="wait for opponent kickoff">
                   <SubTree ID="CamFindAndTrackBall" _autoremap="true" />
                   <SetVelocity />
                </ReactiveSequence>
-               <Sequence _while="!wait_for_opponent_kickoff" name="正常比赛">
+               <Sequence _while="!wait_for_opponent_kickoff" name="normal play">
                   <Sequence>
                      <SubTree ID="CamFindAndTrackBall" _autoremap="true" />
                      <GoalieDecide decision_out="{decision}" decision_in="{decision}" chase_threshold="3.0"/>

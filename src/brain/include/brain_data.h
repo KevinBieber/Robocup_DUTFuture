@@ -14,17 +14,19 @@
 using namespace std;
 
 /**
- * BrainData 类，记录 Brain 在决策中需要用到的所在数据，区分于 BrainConfig，这里是运行时数据（动态）
- * 针对数据处理的一些工具函数，也可以放到这里来
+ * `BrainData` stores runtime (dynamic) data used by `Brain` during decision-making.
+ * This is separate from `BrainConfig` which holds static configuration.
+ * Utility functions for data processing can also be placed here.
  */
 class BrainData
 {
 public:
     BrainData();
-    /* ------------------------------------ 球赛相关状态量 ------------------------------------ */
+    /* ------------------------------------ Match-related state variables ------------------------------------ */
 
     int score = 0;
     int oppoScore = 0;
+    int secsRemaining = 0;  // Remaining match time (seconds)
     int penalty[HL_MAX_NUM_PLAYERS]; 
     int oppoPenalty[HL_MAX_NUM_PLAYERS]; 
     bool isKickingOff = false; 
@@ -34,9 +36,19 @@ public:
     int liveCount = 0; 
     int oppoLiveCount = 0; 
     string realGameSubState; 
+    // Local phase machine for ball-out free kicks (throw-in / goal-kick / corner-kick).
+    string localFreekickPhase = "NONE";
+    string localFreekickLastGcSubState = "NONE";
+    rclcpp::Time localFreekickPhaseStartTime;
+    rclcpp::Time localFreekickStableStartTime;
+    rclcpp::Time localFreekickLastPoseSampleTime;
+    rclcpp::Time localFreekickTargetUpdateTime;
+    Pose2D localFreekickLastPoseSample;
+    bool localFreekickPoseSampleInitialized = false;
+    bool localFreekickSeenStop = false;
+    bool waitForOpponentKickoffByFreekick = false;
+    /* ------------------------------------ Data recording ------------------------------------ */
 
-    /* ------------------------------------ 数据记录 ------------------------------------ */
-    
    
     Pose2D robotPoseToOdom;  
     Pose2D odomToField;      
@@ -51,7 +63,7 @@ public:
     GameObject ball;              
     GameObject tmBall;           
     double robotBallAngleToField; 
-
+    bool lose_ball = false;
 
     inline vector<GameObject> getRobots() const {
         std::lock_guard<std::mutex> lock(_robotsMutex);
@@ -116,7 +128,11 @@ public:
     bool tmImLead = true; 
     bool tmImAlive = true; 
     double tmMyCost = 0.;
+    int tmMyCostRank = 0; // Rank of my cost to reach the ball, used for multi-robot coordination. Cost roughly equals seconds to reach/kick the ball.
+    int myStrikerIDRank = 0; // My ID rank among strikers, used for multi-robot coordination.
+    bool tmImInVisualKick = false; // Whether I am currently in VisualKick mode, used to coordinate with teammates and avoid conflicts.
 
+    bool shouldExitRLVisionKick = false; // Whether to exit RL-based vision kick mode, used to coordinate with brain tree and ensure smooth transition back to normal behavior after visual kick.
 
     int discoveryMsgId = 0;
     rclcpp::Time discoveryMsgTime;
@@ -145,11 +161,11 @@ public:
 
 
     /**
-     * @brief 按类型获取 markings
-     * 
-     * @param type set<string>, 空 set 代表所有类型, 否则代表指定的类型 "LCross" | "TCross" | "XCross" | "PenaltyPoint"
-     * 
-     * @return vector<GameObject> 类型符合的 markings
+     * @brief Get markings by type
+     *
+     * @param types set<string>, empty set means all types; otherwise specify types such as "LCross", "TCross", "XCross", "PenaltyPoint"
+     *
+     * @return vector<GameObject> markings that match the specified types
      */
     vector<GameObject> getMarkingsByType(set<string> types={});
 

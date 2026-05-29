@@ -24,17 +24,20 @@
 
 namespace booster_vision {
 
-VisionNode::VisionNode(const std::string &node_name) :
-    rclcpp::Node(node_name) {
+VisionNode::VisionNode(const std::string &node_name, const rclcpp::NodeOptions &options) :
+    rclcpp::Node(node_name, options) {
     this->declare_parameter<bool>("offline_mode", false);
     this->declare_parameter<bool>("show_det", false);
     this->declare_parameter<bool>("show_seg", false);
     this->declare_parameter<bool>("save_data", true);
     this->declare_parameter<bool>("save_depth", true);
     this->declare_parameter<int>("save_fps", 3);
+    this->declare_parameter<std::string>("robot_name", "");
     this->declare_parameter<std::string>("detection_model_path", "");
     this->declare_parameter<std::string>("segmentation_model_path", "");
-    this->declare_parameter<std::string>("camera_type", "");
+    this->declare_parameter<std::string>("color_topic", "");
+    this->declare_parameter<std::string>("depth_topic", "");
+    this->declare_parameter<std::string>("intrin_topic", "");
 }
 
 // TODO(GW): oneline offline
@@ -57,12 +60,17 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
     std::cout << "loaded file: " << std::endl
               << node << std::endl;
 
+    // Store config node for later use (e.g., when updating intrinsics)
+    config_node_ = node;
+
     this->get_parameter<bool>("show_det", show_det_);
     this->get_parameter<bool>("show_seg", show_seg_);
     this->get_parameter<bool>("save_data", save_data_);
     this->get_parameter<bool>("save_depth", save_depth_);
     this->get_parameter<bool>("offline_mode", offline_mode_);
-    this->get_parameter<std::string>("camera_type", camera_type_);
+    this->get_parameter<std::string>("color_topic", color_topic_);
+    this->get_parameter<std::string>("depth_topic", depth_topic_);
+    this->get_parameter<std::string>("intrin_topic", intrin_topic_);
     this->get_parameter<std::string>("detection_model_path", detection_model_path);
     std::cout << "detection_model_path origin: " << detection_model_path << std::endl;
 
@@ -71,7 +79,7 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
             // absolute path, do nothing
         } else {
             std::string package_path = ament_index_cpp::get_package_share_directory("vision");
-            detection_model_path = std::filesystem::path(package_path) / detection_model_path;
+            detection_model_path = (std::filesystem::path(package_path) / detection_model_path).string();
         }
     }
 
@@ -84,7 +92,7 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
             // absolute path, do nothing
         } else {
             std::string package_path = ament_index_cpp::get_package_share_directory("vision");
-            segmentation_model_path = std::filesystem::path(package_path) / segmentation_model_path;
+            segmentation_model_path = (std::filesystem::path(package_path) / segmentation_model_path).string();
         }
     }
     
@@ -97,7 +105,9 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
     std::cout << "save_data: " << save_data_ << std::endl;
     std::cout << "save_depth: " << save_depth_ << std::endl;
     std::cout << "save_fps: " << save_fps << std::endl;
-    std::cout << "camera_type: " << camera_type_ << std::endl;
+    std::cout << "color_topic: " << color_topic_ << std::endl;
+    std::cout << "depth_topic: " << depth_topic_ << std::endl;
+    std::cout << "intrin_topic: " << intrin_topic_ << std::endl;
     std::cout << "detection_model_path: " << detection_model_path << std::endl;
     std::cout << "segmentation_model_path: " << segmentation_model_path << std::endl;
     save_every_n_frame_ = std::max(1, save_fps > 0 ? 30 / save_fps : 1);
@@ -109,10 +119,17 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
         std::cerr << "no camera param found here" << std::endl;
         return;
     } else {
-        if(camera_type_.empty())
+        if (color_topic_.empty())
         {
-            std::cout << "camera type not overridden by launch file, using default: " << node["camera"]["type"].as<std::string>() << std::endl;
-            camera_type_ = node["camera"]["type"].as<std::string>();
+            color_topic_ = node["camera"]["color_topic"].as<std::string>();
+        }
+        if (intrin_topic_.empty())
+        {
+            intrin_topic_ = node["camera"]["intrin_topic"].as<std::string>();
+        }
+        if (depth_topic_.empty())
+        {
+            depth_topic_ = node["camera"]["depth_topic"].as<std::string>();
         }
         intr_ = Intrinsics(node["camera"]["intrin"]);
         p_eye2head_ = as_or<Pose>(node["camera"]["extrin"], Pose());
@@ -169,6 +186,16 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
     data_logger_->LogYAML(node, "vision_local.yaml");
     seg_data_syncer_ = std::make_shared<DataSyncer>(false);
 
+
+    std::string robot_name = as_or<std::string>(node["robot_name"], "");
+    std::string topic_suffix = "";
+    if (robot_name.empty()) {
+        robot_name = "robot0";
+        topic_suffix = "";
+    } else {
+        topic_suffix = "/" + robot_name;
+    }
+
     // init robot color classifier
     if (node["robot_color_classifier"]) {
         color_classifier_ = std::make_shared<ColorClassifier>();
@@ -199,23 +226,22 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
 
     // init ros related
 
-    std::cout << "current camera_type : " << camera_type_ << std::endl;
-    std::string color_topic;
-    std::string depth_topic;
-    if (camera_type_.find("zed") != std::string::npos) {
-        color_topic = "/zed/zed_node/left/image_rect_color";
-        depth_topic = "/zed/zed_node/depth/depth_registered";
-    } else if (camera_type_ == "d-robotics") {
-        color_topic = "/booster_camera_bridge/StereoNetNode/rectified_image";
-        depth_topic = "/booster_camera_bridge/StereoNetNode/stereonet_depth";
-    } else if (camera_type_ == "orbbec") {
-        color_topic = "/camera/color/image_raw";
-        depth_topic = "/camera/depth/image_raw";
-    } else {
-        // realsense
-        color_topic = "/camera/camera/color/image_raw";
-        depth_topic = "/camera/camera/aligned_depth_to_color/image_raw";
+    if (color_topic_.find("robot0_rgbd_camera") != std::string::npos && !robot_name.empty()) { // sim
+        color_topic_ = color_topic_.replace(color_topic_.find("robot0_rgbd_camera"), std::string("robot0_rgbd_camera").length(), robot_name + "_rgbd_camera");
     }
+    if (depth_topic_.find("robot0_rgbd_camera") != std::string::npos && !robot_name.empty()) { // sim
+        depth_topic_ = depth_topic_.replace(depth_topic_.find("robot0_rgbd_camera"), std::string("robot0_rgbd_camera").length(), robot_name + "_rgbd_camera");
+    }
+    if (intrin_topic_.find("robot0_rgbd_camera") != std::string::npos && !robot_name.empty()) { // sim
+        intrin_topic_ = intrin_topic_.replace(intrin_topic_.find("robot0_rgbd_camera"), std::string("robot0_rgbd_camera").length(), robot_name + "_rgbd_camera");
+    }
+    
+
+    // Subscribe to camera info to update intrinsics dynamically
+    camera_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
+        intrin_topic_, rclcpp::QoS(1).best_effort(),
+        std::bind(&VisionNode::CameraInfoCallback, this, std::placeholders::_1));
+    std::cout << "Subscribing to camera info topic: " << intrin_topic_ << std::endl;
 
     callback_group_sub_1_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     callback_group_sub_2_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -232,60 +258,47 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
 
     it_ = std::make_shared<image_transport::ImageTransport>(shared_from_this());
     image_transport::TransportHints hints(this, "compressed");
-    // Subscribe to both raw and compressed image topics for color
-    if (camera_type_.find("compressed") != std::string::npos) {
-        color_sub_ = it_->subscribe(color_topic, 1, &VisionNode::ColorCallback, this, &hints, sub_opt_1);
+    
+    // Subscribe to color image (raw or compressed)
+    if (color_topic_.find("compressed") != std::string::npos) {
+        std::cout << "Subscribing to compressed color topic: " << color_topic_ << std::endl;
+        compressed_color_sub_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+            color_topic_, 1, std::bind(&VisionNode::CompressedColorCallback, this, std::placeholders::_1), sub_opt_1);
     } else {
-        color_sub_ = it_->subscribe(color_topic, 1, &VisionNode::ColorCallback, this, nullptr, sub_opt_1);
-    } 
-    if (use_depth_) {
-        depth_sub_ = it_->subscribe(depth_topic, 1, &VisionNode::DepthCallback, this, nullptr, sub_opt_3);
+        std::cout << "Subscribing to raw color topic: " << color_topic_ << std::endl;
+        color_sub_ = it_->subscribe(color_topic_, 1, &VisionNode::ColorCallback, this, nullptr, sub_opt_1);
     }
-    if (camera_type_.find("compressed") != std::string::npos) {
-        color_sub_ = it_->subscribe(color_topic, 2, &VisionNode::ColorCallback, this, &hints, sub_opt_1);
-    } else {
-        color_sub_ = it_->subscribe(color_topic, 2, &VisionNode::ColorCallback, this, nullptr, sub_opt_1);
-    } 
-    if (use_depth_) {
-        depth_sub_ = it_->subscribe(depth_topic, 2, &VisionNode::DepthCallback, this, nullptr, sub_opt_3);
+    
+    // Subscribe to depth image (raw or compressed)
+    if (use_depth_ && depth_topic_.find("compressed") != std::string::npos) {
+        std::cout << "Subscribing to compressed depth topic: " << depth_topic_ << std::endl;
+        compressed_depth_sub_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+            depth_topic_, 1, std::bind(&VisionNode::CompressedDepthCallback, this, std::placeholders::_1), sub_opt_3);
+    } else if (use_depth_) {
+        std::cout << "Subscribing to raw depth topic: " << depth_topic_ << std::endl;
+        depth_sub_ = it_->subscribe(depth_topic_, 1, &VisionNode::DepthCallback, this, nullptr, sub_opt_3);
     }
 
-    // auto qos_profile = rclcpp::QoS(rclcpp::KeepLast(1))
-    // auto qos_profile = rclcpp::QoS(rclcpp::KeepLast(1))
-    //     .reliability(rclcpp::ReliabilityPolicy::BestEffort)  // Use best effort for real-time performance
-    //     .durability(rclcpp::DurabilityPolicy::Volatile);
-
-    // color_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-    //     color_topic,
-    //     qos_profile,
-    //     std::bind(&VisionNode::ColorCallback, this, std::placeholders::_1),
-    //     sub_opt_1);
-
-    // depth_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-    //     depth_topic,
-    //     qos_profile,
-    //     std::bind(&VisionNode::DepthCallback, this, std::placeholders::_1),
-    //     sub_opt_3);
-
-    detection_pub_ = this->create_publisher<vision_interface::msg::Detections>("/booster_vision/detection", rclcpp::QoS(1));
+    detection_pub_ = this->create_publisher<vision_interface::msg::Detections>("/booster_soccer/detection" + topic_suffix, rclcpp::QoS(1));
 
     if (node["segmentation_model"]) {
         std::cout << "create sub for segmentor" << std::endl;
-        if (camera_type_.find("compressed") != std::string::npos) {
-            color_seg_sub_ = it_->subscribe(color_topic, 1, &VisionNode::SegmentationCallback, this, &hints, sub_opt_2);
+        if (color_topic_.find("compressed") != std::string::npos) {
+            compressed_color_seg_sub_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+                color_topic_, 1, std::bind(&VisionNode::CompressedSegmentationCallback, this, std::placeholders::_1), sub_opt_2);
         } else {
-            color_seg_sub_ = it_->subscribe(color_topic, 1, &VisionNode::SegmentationCallback, this, nullptr, sub_opt_2);
-        } 
-        field_line_pub_ = this->create_publisher<vision_interface::msg::LineSegments>("/booster_vision/line_segments", rclcpp::QoS(1));
+            color_seg_sub_ = it_->subscribe(color_topic_, 1, &VisionNode::SegmentationCallback, this, nullptr, sub_opt_2);
+        }
+        field_line_pub_ = this->create_publisher<vision_interface::msg::LineSegments>("/booster_soccer/line_segments" + topic_suffix, rclcpp::QoS(1));
     }
-    ball_pub_ = this->create_publisher<vision_interface::msg::Ball>("/booster_vision/ball", rclcpp::QoS(1));
+    ball_pub_ = this->create_publisher<vision_interface::msg::Ball>("/booster_soccer/ball" + topic_suffix, rclcpp::QoS(1));
 
     if (offline_mode_) {
-        pose_tf_sub_ = this->create_subscription<geometry_msgs::msg::TransformStamped>("/booster_vision/t_head2base", 10, std::bind(&VisionNode::PoseTFCallBack, this, std::placeholders::_1));
+        pose_tf_sub_ = this->create_subscription<geometry_msgs::msg::TransformStamped>("/booster_soccer/t_head2base" + topic_suffix, 10, std::bind(&VisionNode::PoseTFCallBack, this, std::placeholders::_1));
     } else {
-        pose_sub_ = this->create_subscription<geometry_msgs::msg::Pose>("/head_pose", 10, std::bind(&VisionNode::PoseCallBack, this, std::placeholders::_1), sub_opt_4);
-        calParam_sub_ = this->create_subscription<vision_interface::msg::CalParam>("/booster_vision/cal_param", 10, std::bind(&VisionNode::CalParamCallback, this, std::placeholders::_1));
-        pose_tf_pub_ = this->create_publisher<geometry_msgs::msg::TransformStamped>("/booster_vision/t_head2base", rclcpp::QoS(10));
+        pose_sub_ = this->create_subscription<geometry_msgs::msg::Pose>("/head_pose" + topic_suffix, 10, std::bind(&VisionNode::PoseCallBack, this, std::placeholders::_1), sub_opt_4);
+        calParam_sub_ = this->create_subscription<vision_interface::msg::CalParam>("/booster_soccer/cal_param" + topic_suffix, 10, std::bind(&VisionNode::CalParamCallback, this, std::placeholders::_1));
+        pose_tf_pub_ = this->create_publisher<geometry_msgs::msg::TransformStamped>("/booster_soccer/t_head2base" + topic_suffix, rclcpp::QoS(10));
     }
 }
 
@@ -433,7 +446,6 @@ void VisionNode::ProcessData(SyncedDataBlock &synced_data, vision_interface::msg
     detection_pub_->publish(detection_msg);
     std::cout << std::endl;
 
-    // 新增: 打印两次检测发布时间间隔
     {
         static double last_pub_time = -1.0;
         static uint64_t count = 0;
@@ -447,29 +459,6 @@ void VisionNode::ProcessData(SyncedDataBlock &synced_data, vision_interface::msg
         last_pub_time = pub_ts;
         count++;
     }
-
-    vision_interface::msg::Ball ball_msg;
-    ball_msg.header = detection_msg.header;
-    ball_msg.confidence = 0;
-    for (auto &detection : filtered_detections) {
-        if (detection.class_name == "Ball" && detection.confidence > ball_msg.confidence) {
-            if (detection.confidence <= ball_msg.confidence) {
-               continue;
-            }
-
-            auto pose_estimator = get_estimator(detection.class_name);
-            Pose pose_obj_by_color = pose_estimator->EstimateByColor(p_eye2base, detection, color);
-            auto value = pose_obj_by_color.getTranslationVec();
-            if (value[0] < -2 || value[0] > 10 || value[1] < -5 || value[1] > 5) {
-                continue;
-            }
-            ball_msg.x = value[0];
-            ball_msg.y = value[1];
-            ball_msg.confidence = detection.confidence;
-            break;
-        }
-    }
-    ball_pub_->publish(ball_msg);
 
     // show vision results
     if (show_det_) {
@@ -509,17 +498,15 @@ void VisionNode::ColorCallback(const sensor_msgs::msg::Image::ConstSharedPtr &ms
         return;
     }
 
-    // cv_bridge::CvImagePtr cv_ptr;
     cv::Mat img;
     try {
-        // cv_ptr = cv_bridge::toCvCopy(msg, msg->encoding);
         img = toCVMat(*msg);
     } catch (std::exception &e) {
         std::cerr << "cv_bridge exception: " << e.what() << std::endl;
         return;
     }
 
-    if (camera_type_ == "realsense") {
+    if (msg->encoding == "rgb8") {
         cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
     }
 
@@ -533,6 +520,40 @@ void VisionNode::ColorCallback(const sensor_msgs::msg::Image::ConstSharedPtr &ms
     ProcessData(synced_data, detection_msg);
     auto end = std::chrono::system_clock::now();
     std::cout << "color callback takes: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()
+              << "ms" << std::endl;
+}
+
+void VisionNode::CompressedColorCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg) {
+    std::cout << "new compressed color for det received" << std::endl;
+    auto start = std::chrono::system_clock::now();
+    if (!msg) {
+        std::cerr << "empty compressed image message." << std::endl;
+        return;
+    }
+
+    cv::Mat img;
+    try {
+        // Decode compressed image
+        img = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_COLOR);
+        if (img.empty()) {
+            std::cerr << "Failed to decode compressed image" << std::endl;
+            return;
+        }
+    } catch (std::exception &e) {
+        std::cerr << "decode exception: " << e.what() << std::endl;
+        return;
+    }
+
+    vision_interface::msg::Detections detection_msg;
+    detection_msg.header = msg->header;
+    double timestamp = msg->header.stamp.sec + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+
+    // get synced data
+    SyncedDataBlock synced_data = data_syncer_->getSyncedDataBlock(ColorDataBlock(img, timestamp));
+    
+    ProcessData(synced_data, detection_msg);
+    auto end = std::chrono::system_clock::now();
+    std::cout << "compressed color callback takes: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()
               << "ms" << std::endl;
 }
 
@@ -553,8 +574,7 @@ void VisionNode::ProcessSegmentationData(SyncedDataBlock &synced_data, vision_in
     auto segmentations = segmentor_->Inference(color);
     std::vector<FieldLineSegment> field_line_segs;
     for (auto &seg : segmentations) {
-        // TODO: fit circle line
-        if (seg.class_id == 0) continue;
+
         auto line_segs = FitFieldLineSegments(p_eye2base, intr_, seg.contour, line_segment_area_threshold_);
         for (auto line_seg : line_segs) {
             float inlier_precentage = static_cast<float>(line_seg.inlier_count) / line_seg.contour_2d_points.size();
@@ -596,13 +616,45 @@ void VisionNode::SegmentationCallback(const sensor_msgs::msg::Image::ConstShared
         return;
     }
 
-    // cv_bridge::CvImagePtr cv_ptr; // 使用cv_bridge将ROS图像消息转换为OpenCV cv::Mat格式
+    // cv_bridge::CvImagePtr cv_ptr; // make use of cv_bridge to convert ROS image message to OpenCV cv::Mat format
     cv::Mat img;
     try {
         // cv_ptr = cv_bridge::toCvCopy(msg, msg->encoding);
         img = toCVMat(*msg).clone();
     } catch (std::exception &e) {
         std::cerr << "cv_bridge exception: " << e.what() << std::endl;
+        return;
+    }
+
+    vision_interface::msg::LineSegments field_line_segs_msg;
+    field_line_segs_msg.header = msg->header;
+    double timestamp = msg->header.stamp.sec + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+
+    // get synced data
+    SyncedDataBlock synced_data = seg_data_syncer_->getSyncedDataBlock(ColorDataBlock(img, timestamp));
+    ProcessSegmentationData(synced_data, field_line_segs_msg);
+}
+
+void VisionNode::CompressedSegmentationCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg) {
+    if (!segmentor_) {
+        std::cerr << "no segmentor loaded." << std::endl;
+        return;
+    }
+    std::cout << "new compressed color for seg received" << std::endl;
+    if (!msg) {
+        std::cerr << "empty compressed image message." << std::endl;
+        return;
+    }
+
+    cv::Mat img;
+    try {
+        img = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_COLOR);
+        if (img.empty()) {
+            std::cerr << "Failed to decode compressed image" << std::endl;
+            return;
+        }
+    } catch (std::exception &e) {
+        std::cerr << "decode exception: " << e.what() << std::endl;
         return;
     }
 
@@ -644,6 +696,38 @@ void VisionNode::DepthCallback(const sensor_msgs::msg::Image::ConstSharedPtr &ms
     // seg_data_syncer_->AddDepth(DepthDataBlock(img, timestamp));
 }
 
+void VisionNode::CompressedDepthCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg) {
+    std::cout << "new compressed depth received" << std::endl;
+    cv::Mat img;
+    try {
+        cv::Mat compressed_data = cv::Mat(msg->data);
+        img = cv::imdecode(compressed_data, cv::IMREAD_ANYDEPTH);
+        
+        if (img.empty()) {
+            std::cerr << "Failed to decode compressed depth image" << std::endl;
+            return;
+        }
+    } catch (std::exception &e) {
+        std::cerr << "decode exception " << e.what() << std::endl;
+        return;
+    }
+
+    if (img.empty()) {
+        std::cerr << "empty image received." << std::endl;
+        return;
+    }
+
+    // Check if the image is indeed 16-bit or 32-bit float
+    if (img.depth() != CV_16U && img.depth() != CV_32F) {
+        std::cerr << "image must be either 16u or 32f." << std::endl;
+        return;
+    }
+
+    double timestamp = msg->header.stamp.sec + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+    data_syncer_->AddDepth(DepthDataBlock(img, timestamp));
+    // seg_data_syncer_->AddDepth(DepthDataBlock(img, timestamp));
+}
+
 void VisionNode::PoseTFCallBack(const geometry_msgs::msg::TransformStamped::SharedPtr msg) {
     double timestamp = msg->header.stamp.sec + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
     data_syncer_->AddPose(PoseDataBlock(Pose(*msg), timestamp));
@@ -668,6 +752,8 @@ void VisionNode::PoseCallBack(const geometry_msgs::msg::Pose::SharedPtr msg) {
     if (!offline_mode_) {
         auto tf_msg = pose.toRosTFMsg();
         tf_msg.header.stamp = builtin_interfaces::msg::Time(current_time);
+        tf_msg.header.frame_id = "odom";
+        tf_msg.child_frame_id = "head_pose";
 
         pose_tf_pub_->publish(tf_msg);
     }
@@ -679,6 +765,121 @@ void VisionNode::CalParamCallback(const vision_interface::msg::CalParam::SharedP
     float z_comp = msg->z_compensation;
     std::cout << "calParams: " << pitch_comp << " " << yaw_comp << " " << z_comp << std::endl;
     p_headprime2head_ = Pose(0, 0, z_comp, 0, pitch_comp * M_PI / 180, yaw_comp * M_PI / 180);
+}
+
+void VisionNode::CameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg) {
+    if (!msg) {
+        std::cerr << "empty camera info message." << std::endl;
+        return;
+    }
+
+    // Track if this is the first update
+    static bool first_update = true;
+    
+    float fx = msg->k[0];
+    float fy = msg->k[4];
+    float cx = msg->k[2];
+    float cy = msg->k[5];
+
+    std::vector<float> distortion_coeffs(msg->d.begin(), msg->d.end());
+
+    // Determine distortion model based on camera type
+    Intrinsics::DistortionModel distortion_model;
+
+    if (msg->d.empty())
+    {
+        distortion_model = Intrinsics::DistortionModel::kNone;
+    } else {
+        // Heuristic: if distortion coefficients are all zero, treat as no distortion
+        float distortion_sum = 0.0;
+        for (size_t i = 0; i < msg->d.size(); ++i) {
+            distortion_sum += std::abs(msg->d[i]);
+        }
+        if (distortion_sum < 1e-6) {
+            distortion_model = Intrinsics::DistortionModel::kNone;
+        } else {
+            if (msg->distortion_model == "plumb_bob") {
+                distortion_model = Intrinsics::DistortionModel::kInverseBrownConrady;
+            } else  {
+                distortion_model = Intrinsics::DistortionModel::kBrownConrady;
+            }
+        }
+    }
+    // Check if distortion coefficients are effectively zero
+    float distortion_sum = 0.0;
+    for (auto coeff : distortion_coeffs) {
+        distortion_sum += std::abs(coeff);
+    }
+    
+    Intrinsics new_intr;
+    if (distortion_sum < 1e-6 || distortion_coeffs.empty()) {
+        new_intr = Intrinsics(fx, fy, cx, cy);
+        std::cout << "Camera has no distortion" << std::endl;
+    } else {
+        new_intr = Intrinsics(fx, fy, cx, cy, distortion_coeffs, distortion_model);
+        std::cout << "Camera has distortion model: " << static_cast<int>(distortion_model) << std::endl;
+    }
+    
+    // Check if values have changed significantly (or if this is the first update)
+    bool should_update = first_update || 
+                        std::abs(intr_.fx - fx) > 0.1 || 
+                        std::abs(intr_.fy - fy) > 0.1 || 
+                        std::abs(intr_.cx - cx) > 0.1 || 
+                        std::abs(intr_.cy - cy) > 0.1;
+    
+    if (should_update) {
+        intr_ = new_intr;
+        std::cout << "Camera intrinsics updated from topic:" << std::endl;
+        std::cout << "  fx=" << fx << ", fy=" << fy << std::endl;
+        std::cout << "  cx=" << cx << ", cy=" << cy << std::endl;
+        std::cout << "  width=" << msg->width << ", height=" << msg->height << std::endl;
+        std::cout << "  distortion_model=" << msg->distortion_model << std::endl;
+        if (!distortion_coeffs.empty()) {
+            std::cout << "  distortion_coeffs: [";
+            for (size_t i = 0; i < distortion_coeffs.size(); ++i) {
+                std::cout << distortion_coeffs[i];
+                if (i < distortion_coeffs.size() - 1) std::cout << ", ";
+            }
+            std::cout << "]" << std::endl;
+        }
+        
+        // Recreate all pose estimators with new intrinsics
+        pose_estimator_map_.clear();
+        
+        pose_estimator_ = std::make_shared<PoseEstimator>(intr_);
+        pose_estimator_->Init(YAML::Node());
+        pose_estimator_map_["default"] = pose_estimator_;
+        std::cout << "Created default pose estimator with updated intrinsics" << std::endl;
+        
+        if (config_node_["ball_pose_estimator"]) {
+            pose_estimator_map_["ball"] = std::make_shared<BallPoseEstimator>(intr_);
+            pose_estimator_map_["ball"]->Init(config_node_["ball_pose_estimator"]);
+            std::cout << "Created ball pose estimator with updated intrinsics" << std::endl;
+        }
+        
+        if (config_node_["human_like_pose_estimator"]) {
+            pose_estimator_map_["human_like"] = std::make_shared<HumanLikePoseEstimator>(intr_);
+            pose_estimator_map_["human_like"]->Init(config_node_["human_like_pose_estimator"]);
+            std::cout << "Created human_like pose estimator with updated intrinsics" << std::endl;
+        }
+        
+        if (config_node_["field_marker_pose_estimator"]) {
+            pose_estimator_map_["field_marker"] = std::make_shared<FieldMarkerPoseEstimator>(intr_);
+            pose_estimator_map_["field_marker"]->Init(config_node_["field_marker_pose_estimator"]);
+            std::cout << "Created field_marker pose estimator with updated intrinsics" << std::endl;
+        }
+        
+        first_update = false;
+    }
+    
+    // After receiving several stable updates, unsubscribe to save resources
+    static int received_count = 0;
+    received_count++;
+    if (received_count >= 5) {
+        camera_info_sub_.reset();
+        std::cout << "Camera info callback disabled after " << received_count << " messages" << std::endl;
+        std::cout << "Final camera intrinsics:" << std::endl << intr_ << std::endl;
+    }
 }
 
 } // namespace booster_vision

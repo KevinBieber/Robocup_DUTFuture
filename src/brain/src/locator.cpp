@@ -22,22 +22,13 @@ void RegisterLocatorNodes(BT::BehaviorTreeFactory &factory, Brain* brain)
     REGISTER_LOCATOR_BUILDER(SelfLocate2X);
 }
 
-void Locator::init(FieldDimensions fd, int minMarkerCntParam, double residualToleranceParam, double muOffestParam, bool enableLogParam, string logIPParam)
+void Locator::init(FieldDimensions fd, int minMarkerCntParam, double residualToleranceParam, double muOffestParam)
 {
     fieldDimensions = fd;
     calcFieldMarkers(fd);
     minMarkerCnt = minMarkerCntParam;
     residualTolerance = residualToleranceParam;
     muOffset = muOffestParam;
-    enableLog = enableLogParam;
-    logIP = logIPParam;
-    if (enableLog) {
-        auto connectError = log.connect(logIP);
-        if (connectError.is_err()) prtErr(format("Rerun log connect Error: %s", connectError.description.c_str()));
-        auto saveError = log.save("/home/booster/log.rrd");
-        if (saveError.is_err()) prtErr(format("Rerun log save Error: %s", saveError.description.c_str()));
-    }
-    
 }
 
 void Locator::calcFieldMarkers(FieldDimensions fd)
@@ -105,8 +96,6 @@ int Locator::genInitialParticles(int num)
     hypos.col(1) = hypos.col(1) * (ymax - ymin) / 2 + (ymin + ymax) / 2;
     hypos.col(2) = hypos.col(2) * (thetamax - thetamin) / 2 + (thetamin + thetamax) / 2;
 
-    logParticles();
-
     return 0;
 }
 
@@ -145,8 +134,6 @@ int Locator::genParticles()
     hypos.col(0) = hypos.col(0).cwiseMax(constraints.xmin).cwiseMin(constraints.xmax);
     hypos.col(1) = hypos.col(1).cwiseMax(constraints.ymin).cwiseMin(constraints.ymax);
     hypos.col(2) = hypos.col(2).cwiseMax(constraints.thetamin).cwiseMin(constraints.thetamax);
-
-    logParticles();
 
     return 0;
 }
@@ -202,7 +189,7 @@ double Locator::residual(vector<FieldMarker> markers_r, Pose2D pose)
         double dist = max(norm(marker_r.x, marker_r.y), 0.1);
         auto marker_f = markerToFieldFrame(marker_r, pose);
         double conf = max(marker_r.confidence, 0.1);
-        res += minDist(marker_f) / dist * 3; // 加权
+        res += minDist(marker_f) / dist * 3; // weighted
     }
 
     return res;
@@ -357,33 +344,14 @@ LocateResult Locator::locateRobot(vector<FieldMarker> markers_r, PoseBox2D const
     return res;
 }
 
-void Locator::logParticles()
-{
-    if (!enableLog) return;
-    vector<rerun::Position2D> points;
-    for (int i = 0; i < hypos.rows(); i++)
-    {
-        auto hypo = hypos.row(i);
-        points.push_back(rerun::Position2D{static_cast<float>(hypo(0)), static_cast<float>(hypo(1))});
-    }
-    log.log(
-        "field/hypos",
-        rerun::Points2D(points).with_draw_order(20.0).with_colors({rerun::Color{255, 0, 0, 255}}).with_radii({0.05}).with_draw_order(20));
-}
-
-
 
 NodeStatus SelfLocate::tick()
 {
-    auto log = [=](string msg) {
-        brain->log->setTimeNow();
-        brain->log->log("debug/SelfLocate", rerun::TextLog(msg));
-    };
     double interval = getInput<double>("msecs_interval").value();
     if (brain->msecsSince(brain->data->lastSuccessfulLocalizeTime) < interval) return NodeStatus::SUCCESS;
 
     string mode = getInput<string>("mode").value();
-    double xMin, xMax, yMin, yMax, thetaMin, thetaMax; 
+    double xMin = 0.0, xMax = 0.0, yMin = 0.0, yMax = 0.0, thetaMin = 0.0, thetaMax = 0.0; 
     auto markers = brain->data->getMarkersForLocator();
 
     if (mode == "face_forward")
@@ -428,27 +396,16 @@ NodeStatus SelfLocate::tick()
     double residual;
     auto res = brain->locator->locateRobot(markers, constraints);
 
-    brain->log->setTimeNow();
     string mstring = "";
     for (int i = 0; i < markers.size(); i++) {
         auto m = markers[i];
-        mstring += format("type: %c  x: %.1f y: %.1f", m.type, m.x, m.y);
+        mstring += format("type: %c  x: %.1f y: %.1f", m.type, m.x, m.y).c_str();
     }
-    if (res.success) {
-        
-        brain->log->log(
-            "field/recal",
-            rerun::Arrows2D::from_vectors({{res.pose.x - brain->data->robotPoseToField.x, -res.pose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(res.success ? 0x00FF00FF : 0xFF0000FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({"pf"})
-        );
-    }
-    log(
-        format(
-            "success: %d  residual: %.2f  marker.size: %d  minMarkerCnt: %d  resTolerance: %.2f marker: %s",
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr(
+            "%s success: %d  residual: %.2f  marker.size: %d  minMarkerCnt: %d  resTolerance: %.2f marker: %s",
+            "self_locate",
             res.success,
             res.residual,
             markers.size(),
@@ -464,17 +421,13 @@ NodeStatus SelfLocate::tick()
     brain->calibrateOdom(res.pose.x, res.pose.y, res.pose.theta);
     brain->tree->setEntry<bool>("odom_calibrated", true);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
-    prtDebug("定位成功: " + to_string(res.pose.x) + " " + to_string(res.pose.y) + " " + to_string(rad2deg(res.pose.theta)) + " Dur: " + to_string(res.msecs));
+    prtDebug("Locate Success: " + to_string(res.pose.x) + " " + to_string(res.pose.y) + " " + to_string(rad2deg(res.pose.theta)) + " Dur: " + to_string(res.msecs));
 
     return NodeStatus::SUCCESS;
 }
 
 NodeStatus SelfLocateEnterField::tick()
 {
-    auto log = [=](string msg, bool success) {
-        brain->log->setTimeNow();
-        brain->log->log("debug/SelfLocateEnterField", rerun::TextLog(msg).with_level(success? rerun::TextLogLevel::Info : rerun::TextLogLevel::Error));
-    };
     double interval = getInput<double>("msecs_interval").value();
     if (brain->msecsSince(brain->data->lastSuccessfulLocalizeTime) < interval) return NodeStatus::SUCCESS;
 
@@ -510,17 +463,16 @@ NodeStatus SelfLocateEnterField::tick()
     } else res = resLeft;
 
     if (report != lastReport) {
-        brain->speak(report);
         lastReport = report;
     }
 
-    brain->log->setTimeNow();
-    string logPath = res.success ? "debug/locator_enter_field/success" : "debug/locator_enter_field/fail";
-    log(
-            format(
-                "%s left success: %d  left residual: %.2f  right success %d  right residual %.2f resTolerance: %.2f markers: %d minMarkerCnt: %d ",
-                report.c_str(),
-                resLeft.success, 
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr(
+            "%s %s left success: %d  left residual: %.2f  right success %d  right residual %.2f resTolerance: %.2f markers: %d minMarkerCnt: %d ",
+            "SelfLocateEnterField",
+            report.c_str(),
+            resLeft.success, 
                 resLeft.residual,
                 resRight.success,
                 resRight.residual,
@@ -531,24 +483,14 @@ NodeStatus SelfLocateEnterField::tick()
             res.success
         );
 
-    brain->log->log(
-        "field/recal_enter_field", 
-        rerun::Arrows2D::from_vectors({{res.pose.x - brain->data->robotPoseToField.x, -res.pose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(res.success ? 0x00FF00FF: 0xFF0000FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({"pfe"})
-    );
-
     if (!res.success) return NodeStatus::SUCCESS; 
 
 
-    // else, 成功了.
+    // else, success.
     brain->calibrateOdom(res.pose.x, res.pose.y, res.pose.theta);
     brain->tree->setEntry<bool>("odom_calibrated", true);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
-    prtDebug("定位成功: " + to_string(res.pose.x) + " " + to_string(res.pose.y) + " " + to_string(rad2deg(res.pose.theta)) + " Dur: " + to_string(res.msecs));
+    prtDebug("Locate Success: " + to_string(res.pose.x) + " " + to_string(res.pose.y) + " " + to_string(rad2deg(res.pose.theta)) + " Dur: " + to_string(res.msecs));
 
     return NodeStatus::SUCCESS;
 }
@@ -561,15 +503,16 @@ NodeStatus SelfLocate1M::tick()
     double maxDrift = getInput<double>("max_drift").value();
     bool validate = getInput<bool>("validate").value();
     
-    auto log = brain->log;
-    log->setTimeNow();
     string logPathS = "/locate/1m/success";
     string logPathF = "/locate/1m/fail";
 
     
     auto msecs = brain->msecsSince(brain->data->lastSuccessfulLocalizeTime);
     if (msecs < interval){
-        log->log(logPathF, rerun::TextLog(format("Failed, msecs(%.1f) < interval(%.1f)", msecs, interval)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, msecs(%.1f).c_str() < interval(%.1f)", logPathF.c_str(), msecs, interval)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -595,21 +538,26 @@ NodeStatus SelfLocate1M::tick()
         markerIndex < 0 || markerIndex >= markings.size()
         || marker.id < 0 || marker.id >= brain->config->mapMarkings.size()
     ) {
-        log->log(logPathF, rerun::TextLog("Failed, No markings Found. Or marker id invalid."));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, No markings Found. Or marker id invalid.", logPathF.c_str())
+        );
         return NodeStatus::SUCCESS;
     }
     mapMarker = brain->config->mapMarkings[marker.id];
 
     if (marker.range > maxDist) {
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, min marker Dist(%.2f) > maxDist(%.2f)", marker.range, maxDist))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, min marker Dist(%.2f).c_str() > maxDist(%.2f)", logPathF.c_str(), marker.range, maxDist)
         );
         return NodeStatus::SUCCESS;
     }
 
     if (!brain->isBoundingBoxInCenter(marker.boundingBox)) {
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, boundingbox is not in the center area"))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, boundingbox is not in the center area", logPathF.c_str())
         );
         return NodeStatus::SUCCESS;
     }
@@ -620,8 +568,9 @@ NodeStatus SelfLocate1M::tick()
 
     double drift = norm(dx, dy);
     if (drift > maxDrift) {
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, drift(%.2f) > maxDrift(%.2f)", drift, maxDrift))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, drift(%.2f).c_str() > maxDrift(%.2f)", logPathF.c_str(), drift, maxDrift)
         );
         return NodeStatus::SUCCESS;
     }
@@ -636,22 +585,17 @@ NodeStatus SelfLocate1M::tick()
         double residual = brain->locator->residual(allMarkers, hypoPose) / allMarkers.size();
         if (residual > brain->locator->residualTolerance) 
         { 
-            log->log(logPathF,
-                rerun::TextLog(format("Failed, validation residual(%.2f) > tolerance(%.2f)", residual, brain->locator->residualTolerance))
+            RCLCPP_INFO(
+                brain->get_logger(),
+                format2cstr("%s, Failed, validation residual(%.2f).c_str() > tolerance(%.2f)", logPathF.c_str(), residual, brain->locator->residualTolerance)
             );
             return NodeStatus::SUCCESS;
         }
     }
 
-    brain->log->log(logPathS, rerun::TextLog(format("Success. Drift = %.2f", drift)));
-    brain->log->log(
-        "field/recal/1m/success",
-        rerun::Arrows2D::from_vectors({{hypoPose.x - brain->data->robotPoseToField.x, -hypoPose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(0x00FF00FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({marker.name})
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr("%s, Success. Drift = %.2f", logPathS.c_str(), drift)
     );
     brain->calibrateOdom(hypoPose.x, hypoPose.y, hypoPose.theta);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
@@ -666,21 +610,23 @@ NodeStatus SelfLocate2X::tick()
     double maxDrift = getInput<double>("max_drift").value();
     bool validate = getInput<bool>("validate").value();
     
-    auto log = brain->log;
-    log->setTimeNow();
     string logPathS = "/locate/2x/success";
     string logPathF = "/locate/2x/fail";
 
     auto msecs = brain->msecsSince(brain->data->lastSuccessfulLocalizeTime);
     if (msecs < interval){
-        log->log(logPathF, rerun::TextLog(format("Failed, msecs(%.1f) < interval(%.1f)", msecs, interval)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, msecs(%.1f).c_str() < interval(%.1f)", logPathF.c_str(), msecs, interval)
+        );
         return NodeStatus::SUCCESS;
     }
 
     auto points = brain->data->getMarkingsByType({"XCross"});
     if (points.size() != 2) {
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, point cnt(%d) != 2", points.size()))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, point cnt(%d).c_str() != 2", logPathF.c_str(), points.size())
         );
         return NodeStatus::SUCCESS;
     }
@@ -689,8 +635,9 @@ NodeStatus SelfLocate2X::tick()
     
     if (p0.range > maxDist || p1.range > maxDist) 
     { 
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, p0 range (%.2f) or p1 range (%.2f) > maxDist(%.2f)", p0.range, p1.range, maxDist))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, p0 range (%.2f).c_str() or p1 range (%.2f) > maxDist(%.2f)", logPathF.c_str(), p0.range, p1.range, maxDist)
         );
         return NodeStatus::SUCCESS;
     }
@@ -698,8 +645,9 @@ NodeStatus SelfLocate2X::tick()
     double xDist = fabs(p0.posToField.x - p1.posToField.x);
     if (xDist > 0.5) 
     { 
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, xDist(%.2f) > maxDist(%.2f)", xDist, 0.5))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, xDist(%.2f).c_str() > maxDist(%.2f)", logPathF.c_str(), xDist, 0.5)
         );
         return NodeStatus::SUCCESS;
     }
@@ -707,8 +655,9 @@ NodeStatus SelfLocate2X::tick()
     double yDist = fabs(p0.posToField.y - p1.posToField.y);
     double mapYDist = brain->config->fieldDimensions.circleRadius * 2.0;
     if (fabs(yDist - mapYDist) > 0.5) { 
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, yDist(%.2f) too far (%.2f) from mapYDist(%.2f)", yDist, 0.5, mapYDist))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, yDist(%.2f).c_str() too far (%.2f) from mapYDist(%.2f)", logPathF.c_str(), yDist, 0.5, mapYDist)
         );
         return NodeStatus::SUCCESS;
     }
@@ -719,8 +668,9 @@ NodeStatus SelfLocate2X::tick()
     double drift = norm(dx, dy);
 
     if (drift > maxDrift) { 
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, dirft(%.2f) > maxDrift(%.2f)", drift, maxDrift))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, dirft(%.2f).c_str() > maxDrift(%.2f)", logPathF.c_str(), drift, maxDrift)
         );
         return NodeStatus::SUCCESS;
     }
@@ -736,22 +686,17 @@ NodeStatus SelfLocate2X::tick()
         double residual = brain->locator->residual(allMarkers, hypoPose) / allMarkers.size();
         if (residual > brain->locator->residualTolerance) 
         { 
-            log->log(logPathF,
-                rerun::TextLog(format("Failed, validation residual(%.2f) > tolerance(%.2f)", residual, brain->locator->residualTolerance))
+            RCLCPP_INFO(
+                brain->get_logger(),
+                format2cstr("%s, Failed, validation residual(%.2f).c_str() > tolerance(%.2f)", logPathF.c_str(), residual, brain->locator->residualTolerance)
             );
             return NodeStatus::SUCCESS;
         }
     }
 
-    brain->log->log(logPathS, rerun::TextLog(format("Success. Dist = %.2f", drift)));
-    brain->log->log(
-        "field/recal/2x/success",
-        rerun::Arrows2D::from_vectors({{hypoPose.x - brain->data->robotPoseToField.x, -hypoPose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(0x00FF00FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({"1p"})
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr("%s, Success. Dist = %.2f", logPathS.c_str(), drift)
     );
     brain->calibrateOdom(hypoPose.x, hypoPose.y, hypoPose.theta);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
@@ -766,14 +711,15 @@ NodeStatus SelfLocate2T::tick()
     double maxDrift = getInput<double>("max_drift").value();
     bool validate = getInput<bool>("validate").value();
     
-    auto log = brain->log;
-    log->setTimeNow();
     string logPathS = "/locate/2t/success";
     string logPathF = "/locate/2t/fail";
 
     auto msecs = brain->msecsSince(brain->data->lastSuccessfulLocalizeTime);
     if (msecs < interval){
-        log->log(logPathF, rerun::TextLog(format("Failed, msecs(%.1f) < interval(%.1f)", msecs, interval)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, msecs(%.1f).c_str() < interval(%.1f)", logPathF.c_str(), msecs, interval)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -804,7 +750,10 @@ NodeStatus SelfLocate2T::tick()
 
 
     if (!found) {
-        log->log(logPathF, rerun::TextLog(format("Failed, No pattern within maxDist(%.2f) Found", maxDist)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, No pattern within maxDist(%.2f).c_str() Found", logPathF.c_str(), maxDist)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -833,7 +782,10 @@ NodeStatus SelfLocate2T::tick()
     }
 
     if (!matched) {
-        log->log(logPathF, rerun::TextLog(format("Failed, can not match to any map positions within maxDrift(%.2f)", maxDrift)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, can not match to any map positions within maxDrift(%.2f).c_str()", logPathF.c_str(), maxDrift)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -850,22 +802,17 @@ NodeStatus SelfLocate2T::tick()
         double residual = brain->locator->residual(allMarkers, hypoPose) / allMarkers.size();
         if (residual > brain->locator->residualTolerance) 
         { 
-            log->log(logPathF,
-                rerun::TextLog(format("Failed, validation residual(%.2f) > tolerance(%.2f)", residual, brain->locator->residualTolerance))
+            RCLCPP_INFO(
+                brain->get_logger(),
+                format2cstr("%s, Failed, validation residual(%.2f).c_str() > tolerance(%.2f)", logPathF.c_str(), residual, brain->locator->residualTolerance)
             );
             return NodeStatus::SUCCESS;
         }
     }
 
-    brain->log->log(logPathS, rerun::TextLog(format("Success. Dist = %.2f", drift)));
-    brain->log->log(
-        "field/recal/2t/success",
-        rerun::Arrows2D::from_vectors({{hypoPose.x - brain->data->robotPoseToField.x, -hypoPose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(0x00FF00FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({"2t"})
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr("%s, Success. Dist = %.2f", logPathS.c_str(), drift)
     );
     brain->calibrateOdom(hypoPose.x, hypoPose.y, hypoPose.theta);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
@@ -880,14 +827,15 @@ NodeStatus SelfLocateLT::tick()
     double maxDrift = getInput<double>("max_drift").value();
     bool validate = getInput<bool>("validate").value();
     
-    auto log = brain->log;
-    log->setTimeNow();
     string logPathS = "/locate/lt/success";
     string logPathF = "/locate/lt/fail";
 
     auto msecs = brain->msecsSince(brain->data->lastSuccessfulLocalizeTime);
     if (msecs < interval){
-        log->log(logPathF, rerun::TextLog(format("Failed, msecs(%.1f) < interval(%.1f)", msecs, interval)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, msecs(%.1f).c_str() < interval(%.1f)", logPathF.c_str(), msecs, interval)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -921,7 +869,10 @@ NodeStatus SelfLocateLT::tick()
 
 
     if (!found) {
-        log->log(logPathF, rerun::TextLog(format("Failed, No pattern within MaxDist(%.2f) Found", maxDist)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, No pattern within maxDist(%.2f).c_str() Found", logPathF.c_str(), maxDist)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -949,7 +900,10 @@ NodeStatus SelfLocateLT::tick()
         if (matched) break;
     }
     if (!matched) {
-        log->log(logPathF, rerun::TextLog(format("Failed, can not match to any map positions within maxDrift(%.2f)", maxDrift)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, can not match to any map positions within maxDrift(%.2f).c_str()", logPathF.c_str(), maxDrift)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -965,22 +919,17 @@ NodeStatus SelfLocateLT::tick()
     if (allMarkers.size() > 0) {
         double residual = brain->locator->residual(allMarkers, hypoPose) / allMarkers.size();
         if (residual > brain->locator->residualTolerance) { 
-            log->log(logPathF,
-                rerun::TextLog(format("Failed, validation residual(%.2f) > tolerance(%.2f)", residual, brain->locator->residualTolerance))
+            RCLCPP_INFO(
+                brain->get_logger(),
+                format2cstr("%s, Failed, validation residual(%.2f).c_str() > tolerance(%.2f)", logPathF.c_str(), residual, brain->locator->residualTolerance)
             );
             return NodeStatus::SUCCESS;
         }
     }
 
-    brain->log->log(logPathS, rerun::TextLog(format("Success. Dist = %.2f", drift)));
-    brain->log->log(
-        "field/recal/lt/success",
-        rerun::Arrows2D::from_vectors({{hypoPose.x - brain->data->robotPoseToField.x, -hypoPose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(0x00FF00FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({"2t"})
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr("%s, Success. Dist = %.2f", logPathS.c_str(), drift)
     );
     brain->calibrateOdom(hypoPose.x, hypoPose.y, hypoPose.theta);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
@@ -995,14 +944,15 @@ NodeStatus SelfLocatePT::tick()
     double maxDrift = getInput<double>("max_drift").value();
     bool validate = getInput<bool>("validate").value();
     
-    auto log = brain->log;
-    log->setTimeNow();
     string logPathS = "/locate/pt/success";
     string logPathF = "/locate/pt/fail";
 
     auto msecs = brain->msecsSince(brain->data->lastSuccessfulLocalizeTime);
     if (msecs < interval){
-        log->log(logPathF, rerun::TextLog(format("Failed, msecs(%.1f) < interval(%.1f)", msecs, interval)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, msecs(%.1f).c_str() < interval(%.1f)", logPathF.c_str(), msecs, interval)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -1033,7 +983,10 @@ NodeStatus SelfLocatePT::tick()
 
 
     if (!found) {
-        log->log(logPathF, rerun::TextLog(format("Failed, No pattern within maxDist(%.2f) Found", maxDist)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, No pattern within maxDist(%.2f).c_str() Found", logPathF.c_str(), maxDist)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -1061,7 +1014,10 @@ NodeStatus SelfLocatePT::tick()
         if (matched) break;
     }
     if (!matched) {
-        log->log(logPathF, rerun::TextLog(format("Failed, can not match to any map positions within maxDrift(%.2f)", maxDrift)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, can not match to any map positions within maxDrift(%.2f).c_str()", logPathF.c_str(), maxDrift)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -1077,22 +1033,19 @@ NodeStatus SelfLocatePT::tick()
     if (allMarkers.size() > 0) {
         double residual = brain->locator->residual(allMarkers, hypoPose) / allMarkers.size();
         if (residual > brain->locator->residualTolerance) { 
-            log->log(logPathF,
-                rerun::TextLog(format("Failed, validation residual(%.2f) > tolerance(%.2f)", residual, brain->locator->residualTolerance))
+
+            RCLCPP_INFO(
+                brain->get_logger(),
+                format2cstr("%s, Failed, validation residual(%.2f).c_str() > tolerance(%.2f)", logPathF.c_str(), residual, brain->locator->residualTolerance)
             );
             return NodeStatus::SUCCESS;
         }
     }
 
-    brain->log->log(logPathS, rerun::TextLog(format("Success. Dist = %.2f", drift)));
-    brain->log->log(
-        "field/recal/pt/success",
-        rerun::Arrows2D::from_vectors({{hypoPose.x - brain->data->robotPoseToField.x, -hypoPose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(0x00FF00FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({"2t"})
+    
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr("%s, Success. Dist = %.2f", logPathS.c_str(), drift)
     );
     brain->calibrateOdom(hypoPose.x, hypoPose.y, hypoPose.theta);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
@@ -1107,14 +1060,15 @@ NodeStatus SelfLocateBorder::tick()
     double maxDrift = getInput<double>("max_drift").value();
     bool validate = getInput<bool>("validate").value();
     
-    auto log = brain->log;
-    log->setTimeNow();
     string logPathS = "/locate/border/success";
     string logPathF = "/locate/border/fail";
 
     auto msecs = brain->msecsSince(brain->data->lastSuccessfulLocalizeTime);
     if (msecs < interval){
-        log->log(logPathF, rerun::TextLog(format("Failed, msecs(%.1f) < interval(%.1f)", msecs, interval)));
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, msecs(%.1f).c_str() < interval(%.1f)", logPathF.c_str(), msecs, interval)
+        );
         return NodeStatus::SUCCESS;
     }
 
@@ -1218,16 +1172,18 @@ NodeStatus SelfLocateBorder::tick()
 
     
     if ((!touchLineFound && !goalLineFound && !middleLineFound)) {
-        log->log(logPathF,
-            rerun::TextLog("No touchline or goalline or middleLine found.")
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, No touchline or goalline or middleLine found.", logPathF.c_str())
         );
         return NodeStatus::SUCCESS;
     }
 
     double drift = norm(dx, dy);
     if (drift > maxDrift) {
-        log->log(logPathF,
-            rerun::TextLog(format("Failed, drift(%.2f) > maxDrift(%.2f)", drift, maxDrift))
+        RCLCPP_INFO(
+            brain->get_logger(),
+            format2cstr("%s, Failed, drift(%.2f).c_str() > maxDrift(%.2f)", logPathF.c_str(), drift, maxDrift)
         );
         return NodeStatus::SUCCESS;
     }
@@ -1240,28 +1196,24 @@ NodeStatus SelfLocateBorder::tick()
     if (allMarkers.size() > 0) {
         double residual = brain->locator->residual(allMarkers, hypoPose) / allMarkers.size();
         if (residual > brain->locator->residualTolerance) { 
-            log->log(logPathF,
-                rerun::TextLog(format("Failed, validation residual(%.2f) > tolerance(%.2f)", residual, brain->locator->residualTolerance))
+            RCLCPP_INFO(
+                brain->get_logger(),
+                format2cstr("%s, Failed, validation residual(%.2f).c_str() > tolerance(%.2f)", logPathF.c_str(), residual, brain->locator->residualTolerance)
             );
             return NodeStatus::SUCCESS;
         }
     }
 
-    brain->log->log(logPathS, rerun::TextLog(format("Success. Drift = %.2f", drift)));
+    RCLCPP_INFO(
+        brain->get_logger(),
+        format2cstr("%s, Success. Drift = %.2f", logPathS.c_str(), drift)
+    );
     string label = "";
     if (touchLineFound) label += "TouchLine";
     if (touchLineFound && (goalLineFound || middleLineFound)) label += " ";
     if (goalLineFound) label += "GoalLine";
     if (middleLineFound) label += "MiddleLine";
-    brain->log->log(
-        "field/recal/border/success",
-        rerun::Arrows2D::from_vectors({{hypoPose.x - brain->data->robotPoseToField.x, -hypoPose.y + brain->data->robotPoseToField.y}})
-            .with_origins({{brain->data->robotPoseToField.x, - brain->data->robotPoseToField.y}})
-            .with_colors(0x00FF00FF)
-            .with_radii(0.01)
-            .with_draw_order(10)
-            .with_labels({label})
-    );
+
     brain->calibrateOdom(hypoPose.x, hypoPose.y, hypoPose.theta);
     brain->data->lastSuccessfulLocalizeTime = brain->get_clock()->now();
     return NodeStatus::SUCCESS;

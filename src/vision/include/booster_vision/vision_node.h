@@ -7,6 +7,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 #include <image_transport/image_transport.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/pose.hpp>
@@ -34,16 +35,20 @@ class SyncedDataBlock;
 
 class VisionNode : public rclcpp::Node {
 public:
-    VisionNode(const std::string &node_name);
+    VisionNode(const std::string &node_name, const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
     ~VisionNode() = default;
 
     void Init(const std::string &cfg_template_path, const std::string &cfg_path);
     void ColorCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg);
+    void CompressedColorCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
     void SegmentationCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg);
+    void CompressedSegmentationCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
     void DepthCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg);
+    void CompressedDepthCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
     void PoseTFCallBack(const geometry_msgs::msg::TransformStamped::SharedPtr msg);
     void PoseCallBack(const geometry_msgs::msg::Pose::SharedPtr msg);
     void CalParamCallback(const vision_interface::msg::CalParam::SharedPtr msg);
+    void CameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
     void ProcessData(SyncedDataBlock &synced_data, vision_interface::msg::Detections &detections);
     void ProcessSegmentationData(SyncedDataBlock &synced_data, vision_interface::msg::LineSegments &field_line_segs_msg);
 
@@ -60,7 +65,9 @@ private:
     int save_cnt_ = 0;
     int save_every_n_frame_ = 0;
 
-    std::string camera_type_;
+    std::string color_topic_;
+    std::string depth_topic_;
+    std::string intrin_topic_;
     std::string img_log_path_;
 
     Intrinsics intr_;
@@ -96,8 +103,12 @@ private:
     image_transport::Subscriber color_sub_;
     image_transport::Subscriber depth_sub_;
     image_transport::Subscriber color_seg_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_color_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_depth_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_color_seg_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Pose>::SharedPtr pose_sub_;
     rclcpp::Subscription<vision_interface::msg::CalParam>::SharedPtr calParam_sub_; // Sub for calibration params
+    rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
 
     rclcpp::CallbackGroup::SharedPtr callback_group_sub_1_;
     rclcpp::CallbackGroup::SharedPtr callback_group_sub_2_;
@@ -113,6 +124,8 @@ private:
     std::shared_ptr<YoloV8Segmentor> segmentor_;
     std::shared_ptr<PoseEstimator> pose_estimator_;
     std::map<std::string, std::shared_ptr<PoseEstimator>> pose_estimator_map_;
+    
+    YAML::Node config_node_;  // Store config for recreating pose estimators
 };
 
 } // namespace booster_vision

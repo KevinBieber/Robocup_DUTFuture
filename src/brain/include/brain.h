@@ -2,17 +2,26 @@
 
 #include <string>
 #include <rclcpp/rclcpp.hpp>
-#include <rerun.hpp>
 #include <opencv2/opencv.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <sensor_msgs/msg/joy.hpp>
-#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/pose_array.hpp>
+#include <geometry_msgs/msg/pose2_d.hpp>
+#include <geometry_msgs/msg/point.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include <vision_interface/msg/detections.hpp>
 #include <vision_interface/msg/line_segments.hpp>
 #include <vision_interface/msg/cal_param.hpp>
 #include <vision_interface/msg/segmentation_result.hpp>
 #include <game_controller_interface/msg/game_control_data.hpp>
+#include "brain/msg/kick.hpp"
 #include <booster/robot/b1/b1_api_const.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -30,7 +39,6 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <stdexcept>
-#include "brain/msg/kick.hpp"
 
 #include "brain_config.h"
 #include "brain_data.h"
@@ -39,48 +47,50 @@
 #include "brain_communication.h"
 #include "locator.h"
 #include "robot_client.h"
+#include "visualization_publisher.h"
 
 using namespace std;
 
 /**
- * Brain 核心类，因为要传递智能指针给 BrainTree，所以需要继承自 enable_shared_from_this
- * 数据封闭到各个子对象中，不要直接存在在 Brain 类
- * 如果是静态的配置值，放到 config
- * 运行时的动态数据，放到 data
- * TODO:
- * BehaviorTree 的 blackboard 里也存了一些数据，看看是不是有些重复存储了的，可以考虑去掉,
- * 目前的设计里，brain 指针传到了 BehaviorTree 的结点里了，在那里直接访问 brain->config 和 brain->data
+ * Core `Brain` class. As shared pointers are passed to `BrainTree`, this class
+ * must support shared_from_this semantics.
+ * Data is encapsulated in sub-objects rather than stored directly in `Brain`.
+ * Static configuration values live in `config`; dynamic runtime data lives in `data`.
+ * TODO: Some data is also stored in the BehaviorTree blackboard; consider removing duplicates.
+ * Current design passes the `brain` pointer into BehaviorTree nodes which directly access `brain->config` and `brain->data`.
  */
 class Brain : public rclcpp::Node
 {
 public:
-    // BrainConfig 对象，主要包含运行时需要的配置值（静态）
+    // BrainConfig object, mainly contains configuration values needed at runtime (static)
     std::shared_ptr<BrainConfig> config;
-    // BrainLog 对象，封装 rerun log 相关的操作
+    // BrainLog object, encapsulates log-related operations
     std::shared_ptr<BrainLog> log;
-    // BrainData 对象，Brain 所有运行时的值都放在这里
+    // BrainData object, all runtime values of Brain are stored here
     std::shared_ptr<BrainData> data;
-    // RobotClient 对象，包含所有对机器人的操作
+    // RobotClient object, contains all operations related to the robot
     std::shared_ptr<RobotClient> client;
-    // locator 对象
+    // Locator object, contains robot localization related operations
     std::shared_ptr<Locator> locator;
-    // BrainTree 对象，里面包含 BehaviorTree 相关的操作
+    // VisualizationPublisher object, used to publish visualization markers
+    std::shared_ptr<VisualizationPublisher> visualizer;
+    // BrainTree object, contains BehaviorTree related operations
     std::shared_ptr<BrainTree> tree;
-    // Communication 对象，里面包含通信相关的操作，主要是双机通信和裁判机通信
+    // Communication object, contains communication related operations, mainly for dual-machine communication and referee communication
     std::shared_ptr<BrainCommunication> communication;
 
-    // 构造函数，接受 nodeName 创建 ros2 结点
+    // Constructor: create ROS2 node (nodeName handled in implementation)
     Brain();
 
     ~Brain();
 
-    // 初始化操作，只需要在 main 函数中调用一次，初始化过程如不符合预期，可以抛异常直接中止程序
+    // Initialize operations, only need to be called once in the main function. If the initialization process does not meet expectations, an exception can be thrown to terminate the program.
     void init();
 
-    // 在 ros2 循环中调用
+    // Called in the ROS2 loop
     void tick();
 
-    // 处理特殊状态, 如发球状态, 任意球发球状态等
+    // Handle special states, such as kickoff, free kick, etc.
     void handleSpecialStates();
 
     void registerLocatorNodes(BT::BehaviorTreeFactory &factory)
@@ -89,21 +99,21 @@ public:
     }
 
     /**
-     * @brief 计算当前球到对方两个球门柱的向量角度, 球场坐标系
+     * @brief Calculate the vector angles from the current ball position to the opponent's goalposts, in the field coordinate system
      *
-     * @param  margin double, 计算角度时, 返回值比实际的球门的位置向内移动这个距离, 因为这个角度球会被门柱挡住. 此值越大, 射门准确性越高, 但调整角度花的时间也越长.
+     * @param  margin double, when calculating the angles, the returned values are moved inward from the actual goal positions by this distance, because the ball will be blocked by the goalposts at this angle. The larger this value, the higher the shooting accuracy, but the longer it takes to adjust the angle.
      *
-     * @return vector<double> 返回值中 vec[0] 是左门柱, vec[1] 是右门柱. 注意左右都是以对方的方向为前方.
+     * @return vector<double> The returned vector contains vec[0] as the left goalpost and vec[1] as the right goalpost. Note that left and right are based on the opponent's direction as the front.
      */
     vector<double> getGoalPostAngles(const double margin = 0.3);
 
     double calcKickDir(double goalPostMargin = 0.3);
 
-    // type: kick: 趟球, shoot: rl 踢球
+    // type: kick: dribble, shoot: rl kick
     bool isAngleGood(double goalPostMargin = 0.3, string type = "kick");
 
    
-    bool isBallOut(double locCompareDist = 2.0, double lineCompareDist = 0.3);
+    bool isBallOut(double locCompareDist = 3.0, double lineCompareDist = 1.0);
 
     
     void updateBallOut();
@@ -123,15 +133,40 @@ public:
 
     rclcpp::Time timePointFromHeader(std_msgs::msg::Header header);
 
-    void playSound(string soundName, double blockMsecs = 1000, bool allowRepeat = false);
-
-    void speak(string text, bool allowRepeat = false);
-
-    bool isPrimaryStriker();
 
     void updateCostToKick();
 
+    /**
+     * @brief Publish visualization markers (robot position, ball position, field lines, mark points)
+     */
+    void publishVisualizationMarkers();
 
+    /**
+     * @brief Publish odom to map TF transform
+     */
+    void publishOdomToMapTF();
+
+    /**
+     * @brief Publish field dimensions as static messages
+     */
+    void publishFieldDimensions();
+
+    /**
+     * @brief Publish robot position (field coordinate system)
+     */
+    void publishRobotPose();
+
+    /**
+     * @brief Publish ball position (field coordinate system)
+     */
+    void publishBallPosition();
+
+    /**
+     * @brief Publish teammates' positions (field coordinate system)
+     */
+    void publishTeammatesPoses();
+
+    void pubKickMsg();
 
     // ------------------------------------------------------ SUB CALLBACKS ------------------------------------------------------
 
@@ -143,17 +178,19 @@ public:
 
     void fieldLineCallback(const vision_interface::msg::LineSegments &msg);
 
-    void imageCallback(const sensor_msgs::msg::Image &msg);
+    void imageCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
 
-    void depthImageCallback(const sensor_msgs::msg::Image &msg);
+    void depthCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
+
+    void depthImageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg);
+
+    void compressedDepthImageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
+
+    void processDepthImage(const cv::Mat &depthFloat, int width, int height, const std_msgs::msg::Header &header);
 
     void odometerCallback(const booster_interface::msg::Odometer &msg);
 
     void lowStateCallback(const booster_interface::msg::LowState &msg);
-
-    // void updateHeadPosBuffer(double pitch, double yaw);
-
-    // bool isHeadStable(double msecSpan = 200);
 
     void headPoseCallback(const geometry_msgs::msg::Pose &msg);
 
@@ -164,11 +201,11 @@ public:
     void updateFieldPos(GameObject &obj);
 
     /**
-     * @brief 计算碰撞距离
+     * @brief Calculate the collision distance
      * 
-     * @param angle double, 目标角度
+     * @param angle double, target angle
      * 
-     * @return double, 碰撞距离
+     * @return double, collision distance
      */
     double distToObstacle(double angle);
 
@@ -176,6 +213,11 @@ public:
 
     double calcAvoidDir(double startAngle, double safeDist);
 
+
+    /**
+     * agent related
+     */
+    void agentCommandCallback(const std_msgs::msg::String::SharedPtr msg);
 
 private:
     void loadConfig();
@@ -187,12 +229,14 @@ private:
     void updateObstacleMemory();
 
     void updateKickoffMemory();
+    // Local phase machine for ball-out free kicks.
+    void updateLocalFreekickPhase();
 
     void updateMemory();
 
     void handleCooperation();
 
-    // ------------------------------------------------------ 视觉处理 ------------------------------------------------------
+    // ------------------------------------------------------ Vision Processing ------------------------------------------------------
 
     int markCntOnFieldLine(const string MarkType, const FieldLine line, const double margin = 0.2);
 
@@ -220,20 +264,11 @@ private:
     void detectProcessGoalposts(const vector<GameObject> &goalpostObjs);
 
     void detectProcessVisionBox(const vision_interface::msg::Detections &msg);
-
-    void logVisionBox(const rclcpp::Time &timePoint);
-
-    void logDetection(const vector<GameObject> &gameObjects, bool logBoundingBox = true);
-
-    void logMemRobots();
-
-    void logObstacles();
     
-    void logDepth(int grid_x_count, int grid_y_count, vector<vector<int>> &grid, vector<rerun::Vec3D> &points);
+    void logDepth(int grid_x_count, int grid_y_count, vector<vector<int>> &grid, vector<std::array<float, 3>> &points);
 
     void logDebugInfo();
 
-    void updateLogFile();
 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joySubscription;
     rclcpp::Subscription<game_controller_interface::msg::GameControlData>::SharedPtr gameControlSubscription;
@@ -241,20 +276,29 @@ private:
     rclcpp::Subscription<vision_interface::msg::LineSegments>::SharedPtr subFieldLine;
     rclcpp::Subscription<booster_interface::msg::Odometer>::SharedPtr odometerSubscription;
     rclcpp::Subscription<booster_interface::msg::LowState>::SharedPtr lowStateSubscription;
-    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr imageSubscription;
+    rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr imageCameraInfoSubscription;
+    rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr depthCameraInfoSubscription;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depthImageSubscription;
+    rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressedDepthImageSubscription;
     rclcpp::Subscription<geometry_msgs::msg::Pose>::SharedPtr headPoseSubscription;
     rclcpp::Subscription<booster_interface::msg::RawBytesMsg>::SharedPtr recoveryStateSubscription;
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pubSoundPlay;
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pubSpeak;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pubVisualizationMarkers;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr pubFieldDimensions;
+    rclcpp::Publisher<geometry_msgs::msg::Pose2D>::SharedPtr pubRobotPose;
+    rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr pubBallPosition;
+    rclcpp::Publisher<brain::msg::Kick>::SharedPtr pubKickBall;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr pubTeammatesPoses;
 
-    // ------------------------------------------------------ 调试 log 相关 ------------------------------------------------------
-    void logObstacleDistance();
+    // ------------------------------------------------------ debug logs related ------------------------------------------------------
     void logLags();
-    void statusReport();
     void logStatusToConsole();
     string getComLogString(); 
-    void playSoundForFun();
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+
+    // ------------------------------------------------------ agent related ------------------------------------------------------
+    // In agent mode, subscribe to parameter changes and handle callbacks
+    std::shared_ptr<rclcpp::ParameterEventHandler> param_subscriber_;
+    std::shared_ptr<rclcpp::ParameterCallbackHandle> team_id_handle_;
+    std::shared_ptr<rclcpp::ParameterCallbackHandle> player_role_handle_;
 };

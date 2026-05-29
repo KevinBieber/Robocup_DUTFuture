@@ -1,9 +1,9 @@
 #!/bin/bash
 echo ["STOP VISION"]
-killall -9 vision_node
+pkill -9 vision_node
+echo ["stop detection_converter"]
+pkill -9 -f detection_converter_node.py
 echo ["STOP BRAIN"]
-killall -9 brain_node
-echo ["STOP SOUND"]
-killall -9 sound_play_node
+pkill -9 brain_node
 echo ["STOP GAMECONTROLLER"]
-killall -9 game_controller
+ps aux | grep "game_controller" | grep -v "game_controller_app" | grep -v "grep" | awk '{print $2}' | xargs -r kill -9

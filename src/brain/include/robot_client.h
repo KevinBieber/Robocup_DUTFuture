@@ -2,7 +2,6 @@
 
 #include <iostream>
 #include <string>
-#include <rerun.hpp>
 
 #include "booster_interface/srv/rpc_service.hpp"
 #include "booster_interface/msg/booster_api_req_msg.hpp"
@@ -10,19 +9,19 @@
 
 using namespace std;
 
-class Brain; // 类相互依赖，向前声明
+class Brain; // Mutually dependent classes; forward declaration
 
 
 /**
- * RobotClient 类，调用 RobotSDK 操控机器人的操作都放在这里
- * 因为目前的代码里依赖 brain 里相关的一些东西，现在设计成跟 brain 相互依赖
+ * `RobotClient` contains calls to RobotSDK to operate the robot.
+ * The implementation currently depends on some `Brain` internals, so they are mutually dependent.
  */
 class RobotClient
 {
 public:
     RobotClient(Brain* argBrain) : brain(argBrain) {}
 
-    void init();
+    void init(string robot_name);
 
     /**
      * @brief 
@@ -30,7 +29,7 @@ public:
      * @param pitch
      * @param yaw
      *
-     * @return int , 0 表示执行成功
+    * @return int , 0 indicates success
      */
     int moveHead(double pitch, double yaw);
 
@@ -42,7 +41,7 @@ public:
      * @param theta double, 
      * @param applyMinX, applyMinY, applyMinTheta bool 
      * 
-     * @return int , 0 表示执行成功
+    * @return int , 0 indicates success
      * 
     */
     int setVelocity(double x, double y, double theta, bool applyMinX=true, bool applyMinY=true, bool applyMinTheta=true);
@@ -59,7 +58,7 @@ public:
      * @param xTolerance, yTolerance, thetaTolerance double,
      * @param avoidObstacle bool, 
      * 
-     * @return int 运控命令返回值, 0 代表成功
+    * @return int Return value of motion-control command; 0 indicates success
      */
     int moveToPoseOnField(double tx, double ty, double ttheta, double longRangeThreshold, double turnThreshold, double vxLimit, double vyLimit, double vthetaLimit, double xTolerance, double yTolerance, double thetaTolerance, bool avoidObstacle = false);
 
@@ -73,7 +72,7 @@ public:
      * @param xTolerance, yTolerance, thetaTolerance double,
      * @param avoidObstacle bool, 
      * 
-     * @return int 运控命令返回值, 0 代表成功
+    * @return int Return value of motion-control command; 0 indicates success
      */
 
     int moveToPoseOnField2(double tx, double ty, double ttheta, double longRangeThreshold, double turnThreshold, double vxLimit, double vyLimit, double vthetaLimit, double xTolerance, double yTolerance, double thetaTolerance, bool avoidObstacle = false);
@@ -87,23 +86,33 @@ public:
      * @param xTolerance, yTolerance, thetaTolerance double, 
      * @param avoidObstacle bool, 
      * 
-     * @return int 运控命令返回值, 0 代表成功
+    * @return int Return value of motion-control command; 0 indicates success
      */
     int moveToPoseOnField3(double tx, double ty, double ttheta, double longRangeThreshold, double turnThreshold, double vxLimit, double vyLimit, double vthetaLimit, double xTolerance, double yTolerance, double thetaTolerance, bool avoidObstacle = false);
 
     /**
-     * @brief 挥手
+     * @brief Wave hand
      */
     int waveHand(bool doWaveHand);
 
     /**
-     * @brief 起身
+     * @brief Stand up
      */
     int standUp();
 
+    /**
+     * @brief switch to RL-based vision kick mode
+     * @param start true indicates entering VisualKick mode, false indicates exiting VisualKick mode
+     */
+     int RLVisionKick(bool start = true);
+
+     /**
+      * @brief switch to robocup gait
+      */
+     int robocupWalk();
 
     /**
-     * @brief 进阻尼
+     * @brief Enter damping mode
      */
     int enterDamping();
 

@@ -7,7 +7,6 @@
 #include <limits>
 #include <cmath>
 #include <chrono>
-#include <rerun.hpp>
 #include <behaviortree_cpp/behavior_tree.h>
 #include <behaviortree_cpp/bt_factory.h>
 
@@ -28,11 +27,8 @@ public:
 	double numShrinkRatio = 0.85;	 
 	double offsetShrinkRatio = 0.8;	 
 	int minMarkerCnt = 3;		 
-	double enableLog = false;		 
-	string logIP = "127.0.0.1:9876"; 
 
 	
-	const rerun::RecordingStream log = rerun::RecordingStream("locator", "locator");
 	vector<FieldMarker> fieldMarkers;
 	FieldDimensions fieldDimensions;
 	Eigen::ArrayXXd hypos;				  
@@ -41,7 +37,7 @@ public:
 	Pose2D bestPose;					  
 	double bestResidual;				  
 
-	void init(FieldDimensions fd, int minMarkerCnt = 4, double residualTolerance = 0.4, double muOffsetParam = 2.0, bool enableLog = false, string logIP = "127.0.0.1:9876");
+	void init(FieldDimensions fd, int minMarkerCnt = 4, double residualTolerance = 0.4, double muOffsetParam = 2.0);
 
 	
 	void calcFieldMarkers(FieldDimensions fd);
@@ -77,8 +73,6 @@ public:
 			return 0.0;
 		return 1 / sqrt(2 * M_PI * sigma * sigma) * exp(-(r - mu) * (r - mu) / (2 * sigma * sigma));
 	};
-
-	void logParticles();
 };
 
 
@@ -100,7 +94,7 @@ public:
     {
         return {
             InputPort<string>("mode", "enter_field", "must be one of [trust_direction, face_forward, fall_recovery]"),
-            InputPort<double>("msecs_interval", 10000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
+            InputPort<double>("msecs_interval", 10000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
         };
     };
 
@@ -118,7 +112,7 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 1000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
+            InputPort<double>("msecs_interval", 1000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
         };
     };
 
@@ -136,10 +130,10 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 1000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
-            InputPort<double>("max_dist", 2.0, "marker 距离机器人的距离小于此值时, 才进行校准. (距离小测距更准)"),
-            InputPort<double>("max_drift", 1.0, "校准后的位置与原位置距离应小于此值, 否则认为校准失败"),
-            InputPort<bool>("validate", true, "校准后, 用其它的 marker 进行验证, 要求小于 locator 的 max residual"),
+            InputPort<double>("msecs_interval", 1000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
+            InputPort<double>("max_dist", 2.0, "Only calibrate when marker distance to robot is less than this value (shorter distance yields more accurate measurement)."),
+            InputPort<double>("max_drift", 1.0, "After calibration, the displacement from the original position must be less than this value; otherwise calibration is considered failed."),
+            InputPort<bool>("validate", true, "After calibration, validate with other markers; require less than locator's max residual"),
         };
     };
 
@@ -157,10 +151,10 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 1000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
-            InputPort<double>("max_dist", 2.0, "penalty point 距离机器人的距离小于此值时, 才进行校准. (距离小测距更准)"),
-            InputPort<double>("max_drift", 1.0, "校准后的位置与原位置距离应小于此值, 否则认为校准失败"),
-            InputPort<bool>("validate", true, "校准后, 用其它的 marker 进行验证, 要求小于 locator 的 max residual"),
+            InputPort<double>("msecs_interval", 1000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
+            InputPort<double>("max_dist", 2.0, "Only calibrate when penalty point distance to robot is less than this value (shorter distance yields more accurate measurement)."),
+            InputPort<double>("max_drift", 1.0, "After calibration, the displacement from the original position must be less than this value; otherwise calibration is considered failed."),
+            InputPort<bool>("validate", true, "After calibration, validate with other markers, requiring less than locator's max residual"),
         };
     };
 
@@ -178,10 +172,10 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 1000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
-            InputPort<double>("max_dist", 2.0, "两个 TCross 距离机器人的距离小于此值时, 才进行校准. (距离小测距更准)"),
-            InputPort<double>("max_drift", 1.0, "校准后的位置与原位置距离应小于此值, 否则认为校准失败"),
-            InputPort<bool>("validate", true, "校准后, 用其它的 marker 进行验证, 要求小于 locator 的 max residual"),
+            InputPort<double>("msecs_interval", 1000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
+            InputPort<double>("max_dist", 2.0, "Only calibrate when both TCross markers are within this distance to the robot (shorter distance yields more accurate measurement)."),
+            InputPort<double>("max_drift", 1.0, "After calibration, the displacement from the original position must be less than this value; otherwise calibration is considered failed."),
+            InputPort<bool>("validate", true, "After calibration, validate with other markers, requiring less than locator's max residual"),
         };
     };
 
@@ -199,10 +193,10 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 1000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
-            InputPort<double>("max_dist", 2.0, "penalty point 距离机器人的距离小于此值时, 才进行校准. (距离小测距更准)"),
-            InputPort<double>("max_drift", 1.0, "校准后的位置与原位置距离应小于此值, 否则认为校准失败"),
-            InputPort<bool>("validate", true, "校准后, 用其它的 marker 进行验证, 要求小于 locator 的 max residual"),
+            InputPort<double>("msecs_interval", 1000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
+            InputPort<double>("max_dist", 2.0, "Only calibrate when penalty point distance to robot is less than this value (shorter distance yields more accurate measurement)."),
+            InputPort<double>("max_drift", 1.0, "After calibration, the displacement from the original position must be less than this value; otherwise calibration is considered failed."),
+            InputPort<bool>("validate", true, "After calibration, validate with other markers, requiring less than locator's max residual"),
         };
     };
 
@@ -220,10 +214,10 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 1000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
-            InputPort<double>("max_dist", 2.0, "penalty point 距离机器人的距离小于此值时, 才进行校准. (距离小测距更准)"),
-            InputPort<double>("max_drift", 1.0, "校准后的位置与原位置距离应小于此值, 否则认为校准失败"),
-            InputPort<bool>("validate", true, "校准后, 用其它的 marker 进行验证, 要求小于 locator 的 max residual"),
+            InputPort<double>("msecs_interval", 1000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
+            InputPort<double>("max_dist", 2.0, "Only calibrate when penalty point distance to robot is less than this value (shorter distance yields more accurate measurement)."),
+            InputPort<double>("max_drift", 1.0, "After calibration, the displacement from the original position must be less than this value; otherwise calibration is considered failed."),
+            InputPort<bool>("validate", true, "After calibration, validate with other markers, requiring less than locator's max residual"),
         };
     };
 
@@ -241,10 +235,10 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 1000, "防止过于频繁地校准, 如果上一次校准距离现在小于这个时间, 则不重新校准."),
-            InputPort<double>("max_dist", 2.0, "border 距离机器人的距离小于此值时, 才进行校准. (距离小测距更准)"),
-            InputPort<double>("max_drift", 1.0, "校准后的位置与原位置距离应小于此值, 否则认为校准失败"),
-            InputPort<bool>("validate", true, "校准后, 用其它的 marker 进行验证, 要求小于 locator 的 max residual"),
+            InputPort<double>("msecs_interval", 1000, "Prevent overly frequent calibration; if last calibration was within this interval, do not recalibrate."),
+            InputPort<double>("max_dist", 2.0, "Only calibrate when border distance to robot is less than this value (shorter distance yields more accurate measurement)."),
+            InputPort<double>("max_drift", 1.0, "After calibration, the displacement from the original position must be less than this value; otherwise calibration is considered failed."),
+            InputPort<bool>("validate", true, "After calibration, validate with other markers, requiring less than locator's max residual"),
         };
     };
 

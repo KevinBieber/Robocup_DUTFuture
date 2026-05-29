@@ -11,19 +11,20 @@ struct TeamCommunicationMsg
     int teamId;
     int playerId;
     int playerRole; // 1: striker, 2: goal_keeper, 3: unknown
-    bool isAlive; // 是否在场上, 且没有在罚时中
-    bool isLead; // 是否在控球状态
+    bool isAlive; // Whether on the field and not currently penalized
+    bool isLead; // Whether in ball-control state
+    bool isInVisualKick; // Whether robot is currently running VisualKick
     bool ballDetected;
     bool ballLocationKnown;
     double ballConfidence;
     double ballRange;
-    double cost; // 计算从当前状态到能踢到球的成本
+    double cost; // Estimated cost to reach/kick the ball from current state
     Point ballPosToField;
     Pose2D robotPoseToField;
     double kickDir;
     double thetaRb;
-    int cmdId; // 每个 player 发布时, 需要将 cmdId + 1. 用来代表发布的顺序. 
-    int cmd; // 百位为 1 时, 代表自己要球控球. 十位为 1 时, 代表守门员要求另一个球员接替守门员角色, 此时个位数字代表接替球员的 playerId. 例如: 100, 代表自己要球控球, 另一个 striker 进入辅助角色; 011, 代表守门员要出击, 要求 1 号球员接替守门.  
+    int cmdId; // Each player increments cmdId when publishing; used to indicate message order.
+    int cmd; // Encoded command: hundreds digit=1 means self requests ball control; tens digit=1 means goalkeeper requests substitution, units digit stores substitute playerId. e.g. 100 = self requests ball control; 011 = goalkeeper goes out and requests player 1 to substitute.
 };
 
 struct TeamDiscoveryMsg

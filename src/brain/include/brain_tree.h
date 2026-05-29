@@ -25,7 +25,7 @@ public:
     template <typename T>
     inline T getEntry(const string &key)
     {
-        T value;
+        T value{};
         [[maybe_unused]] auto res = tree.rootBlackboard()->get<T>(key, value);
         return value;
     }
@@ -42,7 +42,7 @@ private:
     Brain *brain;
 
     /**
-     * 初始化 blackboard 里的 entry，注意新加字段，在这里设置个默认值
+     * Initialize entries in the blackboard. When adding new fields, set a default value here.
      */
     void initEntry();
 };
@@ -56,7 +56,7 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("cross_threshold", 0.2, "可进门的角度范围小于这个值时, 则传中")
+            InputPort<double>("cross_threshold", 0.2, "If the angle range for scoring is less than this value, then pass")
         };
     }
 
@@ -75,9 +75,9 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("chase_threshold", 1.0, "超过这个距离, 执行追球动作"),
-            InputPort<string>("decision_in", "", "用于读取上一次的 decision"),
-            InputPort<string>("position", "offense", "offense | defense, 决定了向哪个方向踢球"),
+            InputPort<double>("chase_threshold", 1.0, "If the distance exceeds this value, execute the chase action"),
+            InputPort<string>("decision_in", "", "Used to read the previous decision"),
+            InputPort<string>("position", "offense", "offense | defense, determines the direction to kick the ball"),
             OutputPort<string>("decision_out")};
     }
 
@@ -98,15 +98,15 @@ public:
     static BT::PortsList providedPorts()
     {
         return {
-            InputPort<double>("chase_threshold", 1.0, "超过这个距离, 执行追球动作"),
-            InputPort<double>("adjust_angle_tolerance", 0.1, "小于这个角度, 认为 adjust 已经成功"),
-            InputPort<double>("adjust_y_tolerance", 0.1, "y 方向偏移小于这个值, 认为 y 方向 adjust 成功"),
-            InputPort<string>("decision_in", "", "用于读取上一次的 decision"),
-            InputPort<double>("auto_visual_kick_enable_dist_min", 2.0, "自动视觉踢球启用时球的最小距离"),
-            InputPort<double>("auto_visual_kick_enable_dist_max", 3.0, "自动视觉踢球启用时球的最大距离"),
-            InputPort<double>("auto_visual_kick_enable_angle", 0.785, "自动视觉踢球启用时球的角度范围"),
-            InputPort<double>("auto_visual_kick_obstacle_dist_threshold", 3.0, "自动视觉踢球障碍物距离阈值，如果该距离内有障碍物，则不执行自动视觉踢球"),
-            InputPort<double>("auto_visual_kick_obstacle_angle_threshold", 1.744, "自动视觉踢球障碍物在前方角度范围内的阈值，如果该角度内有障碍物，则不执行自动视觉踢球"),
+            InputPort<double>("chase_threshold", 1.0, "If the distance exceeds this value, execute the chase action"),
+            InputPort<double>("adjust_angle_tolerance", 0.1, "If the angle is less than this value, consider adjust successful"), //
+            InputPort<double>("adjust_y_tolerance", 0.1, "If the y-direction offset is less than this value, consider y-direction adjust successful"),  //
+            InputPort<string>("decision_in", "", "Used to read the previous decision"),
+            InputPort<double>("auto_visual_kick_enable_dist_min", 2.0, "Minimum distance for enabling auto visual kick"),
+            InputPort<double>("auto_visual_kick_enable_dist_max", 3.0, "Maximum distance for enabling auto visual kick"),
+            InputPort<double>("auto_visual_kick_enable_angle", 0.785, "Angle range for enabling auto visual kick"),
+            InputPort<double>("auto_visual_kick_obstacle_dist_threshold", 3.0, "Obstacle distance threshold for auto visual kick, if an obstacle is within this distance, auto visual kick is not executed"),
+            InputPort<double>("auto_visual_kick_obstacle_angle_threshold", 1.744, "Obstacle angle threshold for auto visual kick, if an obstacle is within this angle, auto visual kick is not executed"),
             OutputPort<string>("decision_out"),
         };
     }
@@ -161,7 +161,7 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("vyaw_limit", 1.0, "转向的速度上限"),
+            InputPort<double>("vyaw_limit", 1.0, "Maximum turning speed when searching for the ball"),
         };
     }
 
@@ -185,7 +185,7 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("msecs_interval", 300, "在同一个位置停留多少毫秒"),
+            InputPort<double>("msecs_interval", 300, "How many milliseconds to stay at the same position"),
         };
     }
 
@@ -218,8 +218,8 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("rad", 0, "转多少弧度, 向左为正"),
-            InputPort<bool>("towards_ball", false, "为 true 时, 不考虑 rad 的正负号, 而是转向上一次看到不球的方向.")
+            InputPort<double>("rad", 0, "How many radians to turn, positive for left"),
+            InputPort<bool>("towards_ball", false, "If true, ignore the sign of rad and turn towards the last seen ball direction")
         };
     }
 
@@ -247,11 +247,11 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("vx_limit", 0.6, "追球的最大 x 速度"),
-            InputPort<double>("vy_limit", 0.4, "追球的最大 y 速度"),
-            InputPort<double>("vtheta_limit", 1.0, "追球时, 实时调整方向的速度不大于这个值"),
-            InputPort<double>("dist", 0.1, "追球的目标是球后面多少距离"),
-            InputPort<double>("safe_dist", 4.0, "circle back 时, 保持的安全距离"),
+            InputPort<double>("vx_limit", 0.6, "Maximum x speed when chasing the ball"),
+            InputPort<double>("vy_limit", 0.4, "Maximum y speed when chasing the ball"),
+            InputPort<double>("vtheta_limit", 1.0, "Maximum angular speed when chasing the ball"),
+            InputPort<double>("dist", 0.1, "Target distance behind the ball when chasing"),
+            InputPort<double>("safe_dist", 4.0, "Safe distance to maintain when circling back"),
         };
     }
 
@@ -272,17 +272,17 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("turn_threshold", 3.25, "球的角度大于这个值, 机器人先转身面向球, 直线运动先暂停"),
-            InputPort<double>("vx_limit", 0.05, "调整过过程中 vx 的限制 [-limit, limit]"),
-            InputPort<double>("vy_limit", 0.05, "调整过过程中 vy 的限制 [-limit, limit]"),
-            InputPort<double>("vtheta_limit", 0.1, "调整过过程中 vtheta 的限制 [-limit, limit]"),
-            InputPort<double>("range", 2.25, "ball  range 保持这个值"),
-            InputPort<double>("vtheta_factor", 3.0, "调整角度时, vtheta 的乘数, 越大转向越快"),
-            InputPort<double>("tangential_speed_far", 0.2, "调整角度时, 较远时的切线速度"),
-            InputPort<double>("tangential_speed_near", 0.15, "调整角度时, 较近时的切线速度"),
-            InputPort<double>("near_threshold", 0.8, "距离目标小于这个值时, 使用 near speed"),
-            InputPort<double>("no_turn_threshold", 0.02, "角度差小于这个值时, 不转身"),
-            InputPort<double>("turn_first_threshold", 0.8, "角度差大于这个值时, 先转身, 不移动"),
+            InputPort<double>("turn_threshold", 3.25, "If the ball angle is greater than this value, the robot will turn to face the ball and pause linear movement"),
+            InputPort<double>("vx_limit", 0.05, "Limit for vx during adjustment [-limit, limit]"),
+            InputPort<double>("vy_limit", 0.05, "Limit for vy during adjustment [-limit, limit]"),
+            InputPort<double>("vtheta_limit", 0.1, "Limit for vtheta during adjustment [-limit, limit]"),
+            InputPort<double>("range", 2.25, "Maintain this ball range"),
+            InputPort<double>("vtheta_factor", 3.0, "Multiplier for vtheta when adjusting angle, higher values result in faster turning"),
+            InputPort<double>("tangential_speed_far", 0.2, "Tangential speed when far from the target"),
+            InputPort<double>("tangential_speed_near", 0.15, "Tangential speed when near the target"),
+            InputPort<double>("near_threshold", 0.8, "Use near speed when distance to target is less than this value"),
+            InputPort<double>("no_turn_threshold", 0.02, "Do not turn if angle difference is less than this value"),
+            InputPort<double>("turn_first_threshold", 0.8, "Turn first without moving if angle difference is greater than this value"),
 
         };
     }
@@ -293,7 +293,7 @@ private:
     Brain *brain;
 };
 
-// 执行踢球动作
+// Execute kick action
 class Kick : public StatefulActionNode
 {
 public:
@@ -302,9 +302,9 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("min_msec_kick", 500, "踢球动作最少执行多少毫秒"),
-            InputPort<double>("msecs_stablize", 1000, "稳定多少毫秒"),
-            InputPort<double>("speed_limit", 0.8, "速度最大值"),
+            InputPort<double>("min_msec_kick", 500, "Minimum duration for the kick action (milliseconds)"),
+            InputPort<double>("msecs_stablize", 1000, "Duration to stabilize before kicking (milliseconds)"),
+            InputPort<double>("speed_limit", 0.8, "Maximum speed for the kick action"),
         };
     }
 
@@ -325,6 +325,56 @@ private:
     tuple<double, double, double> _calcSpeed();
 };
 
+class RLVisionKick : public StatefulActionNode
+{
+public:
+    RLVisionKick(const string &name, const NodeConfig &config, Brain *_brain) : StatefulActionNode(name, config), brain(_brain) {}
+
+    static PortsList providedPorts()
+    {
+        return {
+            InputPort<double>("max_msec_kick", 10000, "Maximum duration for the kick action (milliseconds)"),
+            InputPort<double>("min_msec_kick", 3000, "Minimum duration for the kick action (milliseconds)"),
+            InputPort<double>("range", 1.5, "Range within which the strategy is considered effective"),
+            InputPort<double>("auto_visual_kick_enable_dist_min", 0.0, "Minimum distance for enabling auto visual kick"),
+            InputPort<double>("auto_visual_kick_enable_dist_max", 4.0, "Maximum distance for enabling auto visual kick"),
+            InputPort<double>("auto_visual_kick_enable_angle", 0.785, "Angle range for enabling auto visual kick"),
+            InputPort<double>("auto_visual_kick_enable_goal_angle", 0.35, "Angle range for enabling auto visual kick towards the goal"),
+            InputPort<double>("auto_visual_kick_obstacle_dist_threshold", 1.0, "Distance threshold for obstacles during auto visual kick, if an obstacle is within this distance, auto visual kick will not be executed"),
+            InputPort<double>("auto_visual_kick_obstacle_angle_threshold", 1.744, "Angle threshold for obstacles in front during auto visual kick, if an obstacle is within this angle, auto visual kick will not be executed"),
+        };
+    }
+
+    NodeStatus onStart() override;
+
+    NodeStatus onRunning() override;
+
+    void onHalted() override;
+    
+    static rclcpp::Time getLastExitTime() { return _lastExitTime; }
+    
+    static bool isMinIntervalSatisfied(double minIntervalMsec);
+
+private:
+    Brain *brain;
+    rclcpp::Time _startTime;              // Start time of the kick action
+    rclcpp::Time _headScanStartTime;      // Start time for head scanning
+    
+    // Non-blocking deceleration state
+    bool _isDecelerating = false;         // Whether deceleration is in progress
+    bool _visionKickStarted = false;     // Whether visual kick mode has started
+    bool _pendingRobocupWalk = false;    // Whether waiting to switch to robocupWalk after deceleration
+    rclcpp::Time _decelStartTime;        // Deceleration start time
+    double _decelDurationMs = 500.0;     // Deceleration duration (milliseconds)
+    
+    // Static variable: records the last exit time of RLVisionKick to limit frequent switching
+    static rclcpp::Time _lastExitTime;
+    
+    // Helper methods
+    void recordExitTime();
+    void startDecelerate(double durationMs = 500.0);
+    bool stepDecelerate();
+};
 
 class StandStill : public StatefulActionNode
 {
@@ -334,7 +384,7 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<int>("msecs", 1000, "站立多少毫秒"),
+            InputPort<int>("msecs", 1000, "Duration to stand still (milliseconds)"),
         };
     }
 
@@ -359,11 +409,11 @@ public:
     static BT::PortsList providedPorts()
     {
         return {
-            InputPort<double>("low_pitch", 0.6, "向下看时的最大 pitch"),
-            InputPort<double>("high_pitch", 0.45, "向上看时的最小 pitch"),
-            InputPort<double>("left_yaw", 0.8, "向左看时的最大 yaw"),
-            InputPort<double>("right_yaw", -0.8, "向右看时的最小 yaw"),
-            InputPort<int>("msec_cycle", 4000, "多少毫秒转一圈"),
+            InputPort<double>("low_pitch", 0.5, "Maximum pitch when looking down"),
+            InputPort<double>("high_pitch", 0.2, "Minimum pitch when looking up"),
+            InputPort<double>("left_yaw", 0.8, "Maximum yaw when looking left"),
+            InputPort<double>("right_yaw", -0.8, "Minimum yaw when looking right"),
+            InputPort<int>("msec_cycle", 4000, "Duration for a full scan cycle (milliseconds)"),
         };
     }
 
@@ -382,18 +432,18 @@ public:
     static BT::PortsList providedPorts()
     {
         return {
-            InputPort<double>("x", 0, "目标 x 坐标, Field 坐标系"),
-            InputPort<double>("y", 0, "目标 y 坐标, Field 坐标系"),
-            InputPort<double>("theta", 0, "目标最终朝向, Field 坐标系"),
-            InputPort<double>("long_range_threshold", 1.5, "目标点的距离超过这个值时, 优先走过去, 而不是细调位置和方向"),
-            InputPort<double>("turn_threshold", 0.4, "长距离时, 目标点的方向超这个数值时, 先转向目标点"),
-            InputPort<double>("vx_limit", 0.8, "x 限速"),
-            InputPort<double>("vy_limit", 0.5, "y 限速"),
-            InputPort<double>("vtheta_limit", 0.2, "theta 限速"),
-            InputPort<double>("x_tolerance", 0.5, "x 容差"),
-            InputPort<double>("y_tolerance", 0.5, "y 容差"),
-            InputPort<double>("theta_tolerance", 0.5, "theta 容差"),
-            InputPort<bool>("avoid_obstacle", false, "是否避障")
+            InputPort<double>("x", 0, "Target x coordinate in the Field frame"),
+            InputPort<double>("y", 0, "Target y coordinate in the Field frame"),
+            InputPort<double>("theta", 0, "Target final orientation in the Field frame"),
+            InputPort<double>("long_range_threshold", 1.5, "If the distance to the target point exceeds this value, prioritize moving towards it rather than fine-tuning position and orientation"),
+            InputPort<double>("turn_threshold", 0.4, "When the distance is long, if the direction to the target point exceeds this value, turn towards the target point first"),
+            InputPort<double>("vx_limit", 0.8, "x speed limit"),
+            InputPort<double>("vy_limit", 0.5, "y speed limit"),
+            InputPort<double>("vtheta_limit", 0.2, "theta speed limit"),
+            InputPort<double>("x_tolerance", 0.5, "x tolerance"),
+            InputPort<double>("y_tolerance", 0.5, "y tolerance"),
+            InputPort<double>("theta_tolerance", 0.5, "theta tolerance"),
+            InputPort<bool>("avoid_obstacle", false, "Whether to avoid obstacles")
         };
     }
 
@@ -437,7 +487,7 @@ public:
             InputPort<double>("theta_tolerance", 0.8, "theta tolerance, winin which considered arrived."),
             InputPort<double>("vx_limit", 0.1, "x speed limit"),
             InputPort<double>("vy_limit", 0.1, "y speed limit"),
-            InputPort<double>("dist_to_goalline", 2.5, "机器人站在门前多少距离"),
+            InputPort<double>("dist_to_goalline", 2.5, "Distance from the robot to the goal line"),
         };
     }
 
@@ -460,7 +510,7 @@ public:
             InputPort<double>("theta_tolerance", 0.8, "theta tolerance, winin which considered arrived."),
             InputPort<double>("vx_limit", 0.1, "x speed limit"),
             InputPort<double>("vy_limit", 0.1, "y speed limit"),
-            InputPort<double>("dist_to_goalline", 2.5, "机器人站在门前多少距离"),
+            InputPort<double>("dist_to_goalline", 2.5, "Distance from the robot to the goal line"),
         };
     }
 
@@ -472,9 +522,9 @@ private:
 
 
 /**
- * @brief 设置机器人的速度
+ * @brief Set the robot's velocity
  *
- * @param x,y,theta double, 机器人在 x，y 方向上的速度（m/s）和逆时针转动的角速度（rad/s), 默认值为 0. 全为 0 时，即相当于给出站立不动指令
+ * @param x,y,theta double, Robot's velocity in the x, y directions (m/s) and counterclockwise angular velocity (rad/s), default is 0. When all are 0, it is equivalent to giving a standstill command.
  *
  */
 class SetVelocity : public SyncActionNode
@@ -496,7 +546,6 @@ private:
     Brain *brain;
 };
 
-// 原地踏步
 class StepOnSpot : public SyncActionNode
 {
 public:
@@ -598,7 +647,6 @@ private:
     bool _isInFinalAdjust = false; 
 };
 
-// 回到场地内
 class GoBackInField : public SyncActionNode
 {
 public:
@@ -607,7 +655,7 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("valve", 0.5, "回到场内距离边界多远可以停止"),
+            InputPort<double>("valve", 0.5, "Distance from the boundary to stop when returning to the field"),
         };
     }
 
@@ -626,10 +674,10 @@ public:
     static PortsList providedPorts()
     {
         return {
-            InputPort<double>("stop_dist", 1.0, "在距离球多远的距离, 就不再走向球了"),
-            InputPort<double>("stop_angle", 0.1, "球的角度在多少时, 就不再转向球了"),
-            InputPort<double>("vy_limit", 0.2, "限制 Y 方向速度, 以防止走路不稳定. 要起作用需要小于机器本身的限速 0.4"),
-            InputPort<double>("vx_limit", 0.6, "限制 X 方向速度, 以防止走路不稳定. 要起作用需要小于机器本身的限速 1.2"),
+            InputPort<double>("stop_dist", 1.0, "Distance from the ball to stop moving towards it"),
+            InputPort<double>("stop_angle", 0.1, "Angle of the ball to stop turning towards it"),
+            InputPort<double>("vy_limit", 0.2, "Limit Y direction speed to prevent walking instability. Must be less than the robot's maximum speed 0.4 to take effect"),
+            InputPort<double>("vx_limit", 0.6, "Limit X direction speed to prevent walking instability. Must be less than the robot's maximum speed 1.2 to take effect"),
         };
     }
 
@@ -661,7 +709,6 @@ private:
 };
 
 
-// 向 cout 打印文字
 class PrintMsg : public SyncActionNode
 {
 public:
@@ -675,49 +722,6 @@ public:
     static PortsList providedPorts()
     {
         return {InputPort<std::string>("msg")};
-    }
-
-private:
-    Brain *brain;
-};
-
-// 播放一些预定义的声音
-class PlaySound : public SyncActionNode
-{
-public:
-    PlaySound(const std::string &name, const NodeConfig &config, Brain *_brain) : SyncActionNode(name, config), brain(_brain)
-    {
-    }
-
-    NodeStatus tick() override;
-
-    static BT::PortsList providedPorts()
-    {
-        return {
-            InputPort<string>("sound", "cheerful", "播放声音的名称"),
-            InputPort<bool>("allow_repeat", false, "是否允许重复播放同一个声音"),
-        };
-    }
-
-private:
-    Brain *brain;
-};
-
-// 使用本地 tts (espeak) 朗读文本
-class Speak : public SyncActionNode
-{
-public:
-    Speak(const std::string &name, const NodeConfig &config, Brain *_brain) : SyncActionNode(name, config), brain(_brain)
-    {
-    }
-
-    NodeStatus tick() override;
-
-    static BT::PortsList providedPorts()
-    {
-        return {
-            InputPort<string>("text", "", "朗读的文本内容, 必须是英文"),
-        };
     }
 
 private:
